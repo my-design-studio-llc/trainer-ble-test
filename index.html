@@ -34,7 +34,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 <body>
 <main>
   <h1>Smart Trainer Connection Test</h1>
-  <p>Open in Chrome on Android. Power on the trainer, turn on Bluetooth and Location on your phone, and close any training app that may be holding the trainer&rsquo;s Bluetooth connection.</p>
+  <p>Open in Chrome on Android. Supports FTMS, FE-C over BLE and Cycling Power (read-only). Power on the trainer, turn on Bluetooth and Location on your phone, and close any training app that may be holding the trainer&rsquo;s Bluetooth connection.</p>
 
   <section>
     <div class="status" id="status">Not connected</div>
@@ -53,7 +53,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
   </section>
 
   <section>
-    <strong>ERG mode (FTMS target power)</strong>
+    <strong>ERG mode (target power) <span id="proto" style="font-weight:400;color:var(--muted)"></span></strong>
     <div class="row">
       <input id="target" type="number" value="150" min="0" max="2000" step="10" inputmode="numeric">
       <span>W</span>
@@ -69,12 +69,15 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const FTMS=0x1826, CPS=0x1818, FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e';
+const FTMS=0x1826, CPS=0x1818;
+const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
+const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
 const $=id=>document.getElementById(id);
-let device=null, cp=null;
+let device=null, ctl=null; // ctl: {name, setPower(w), stop()}
 
 function log(m){const t=new Date().toLocaleTimeString();$('log').textContent=`[${t}] ${m}\n`+$('log').textContent;}
 function setStatus(t,c){const s=$('status');s.textContent=t;s.className='status '+(c||'');}
+function show(k,v){$(k).textContent=v;}
 
 (async()=>{
   if(!navigator.bluetooth){setStatus('This browser does not support Web Bluetooth (or it is blocked by the page frame)','bad');log('navigator.bluetooth is missing. Use Chrome on Android.');$('connect').disabled=true;return;}
@@ -94,26 +97,16 @@ $('connect').onclick=async()=>{
     setStatus('Connected: '+(device.name||'device'),'ok'); ui(true);
     const svcs=await server.getPrimaryServices();
     log('Services: '+svcs.map(s=>s.uuid.slice(4,8)).join(', '));
-    let gotFtms=false;
-    try{
-      const f=await server.getPrimaryService(FTMS);
-      const bike=await f.getCharacteristic(0x2AD2);
-      bike.addEventListener('characteristicvaluechanged',e=>parseBike(e.target.value));
-      await bike.startNotifications(); gotFtms=true; log('Subscribed to FTMS Indoor Bike Data');
-      try{
-        cp=await f.getCharacteristic(0x2AD9);
-        cp.addEventListener('characteristicvaluechanged',e=>{const v=e.target.value;log('Control point response: '+hex(v));});
-        await cp.startNotifications();
-        $('erg').disabled=$('ergoff').disabled=false; log('FTMS control point ready');
-      }catch(e){log('Control point unavailable: '+e.message);}
-    }catch(e){log('No FTMS: '+e.message);}
-    if(!gotFtms){
-      try{
-        const c=await (await server.getPrimaryService(CPS)).getCharacteristic(0x2A63);
-        c.addEventListener('characteristicvaluechanged',e=>{$('power').textContent=e.target.value.getInt16(2,true);});
-        await c.startNotifications(); log('Subscribed to Cycling Power');
-      }catch(e){log('No Cycling Power: '+e.message);}
+    const has=u=>svcs.some(s=>s.uuid===BluetoothUUID.getService(u));
+    // Protocol order: FTMS, then FE-C over BLE, then Cycling Power (read-only)
+    if(has(FTMS)&&await useFtms(server))return;
+    if(has(FEC)&&await useFec(server)){
+      // Use Cycling Power for the numbers if FE-C sends no trainer data
+      if(has(CPS))setTimeout(()=>{if(device?.gatt?.connected&&!seenPages.has(0x19)){log('No FE-C trainer data after 5 s, reading Cycling Power');useCps(server);}},5000);
+      return;
     }
+    if(has(CPS))await useCps(server);
+    else log('No usable data service found');
   }catch(e){
     if(e.name==='SecurityError'||/permission|policy|allowed/i.test(e.message)){
       setStatus('Bluetooth blocked by the browser or page frame','bad');
@@ -125,31 +118,123 @@ $('connect').onclick=async()=>{
 
 $('disconnect').onclick=()=>{device?.gatt?.disconnect();};
 
-function ui(on){$('disconnect').disabled=!on;$('connect').disabled=on;if(!on){$('erg').disabled=$('ergoff').disabled=true;cp=null;}}
-function hex(v){return [...new Uint8Array(v.buffer)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}
+function ui(on){$('disconnect').disabled=!on;$('connect').disabled=on;if(!on){setCtl(null);['power','cadence','speed'].forEach(k=>show(k,'--'));}}
+function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;$('proto').textContent=c?'via '+c.name:'';}
+function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}
+
+// ---- FTMS ----
+async function useFtms(server){
+  try{
+    const f=await server.getPrimaryService(FTMS);
+    const bike=await f.getCharacteristic(0x2AD2);
+    bike.addEventListener('characteristicvaluechanged',e=>parseBike(e.target.value));
+    await bike.startNotifications(); log('Subscribed to FTMS Indoor Bike Data');
+    try{
+      const cp=await f.getCharacteristic(0x2AD9);
+      cp.addEventListener('characteristicvaluechanged',e=>log('Control point response: '+hex(e.target.value)));
+      await cp.startNotifications();
+      const write=async b=>{await cp.writeValueWithResponse(new Uint8Array(b));log('Wrote: '+hex(new DataView(new Uint8Array(b).buffer)));};
+      setCtl({name:'FTMS',
+        async setPower(w){await write([0x00]);await write([0x07]);await write([0x05,w&255,(w>>8)&255]);}, // Request Control, Start, Set Target Power
+        async stop(){await write([0x08,0x01]);await write([0x01]);}}); // Stop, Reset
+      log('FTMS control point ready');
+    }catch(e){log('Control point unavailable: '+e.message);}
+    return true;
+  }catch(e){log('No FTMS: '+e.message);return false;}
+}
 
 // FTMS Indoor Bike Data (0x2AD2)
 function parseBike(v){
   const fl=v.getUint16(0,true); let o=2;
-  if(!(fl&1)){$('speed').textContent=(v.getUint16(o,true)/100).toFixed(1);o+=2;}
+  if(!(fl&1)){show('speed',(v.getUint16(o,true)/100).toFixed(1));o+=2;}
   if(fl&2)o+=2;
-  if(fl&4){$('cadence').textContent=Math.round(v.getUint16(o,true)/2);o+=2;}
+  if(fl&4){show('cadence',Math.round(v.getUint16(o,true)/2));o+=2;}
   if(fl&8)o+=2;
   if(fl&16)o+=3;
   if(fl&32)o+=2;
-  if(fl&64){$('power').textContent=v.getInt16(o,true);o+=2;}
+  if(fl&64){show('power',v.getInt16(o,true));o+=2;}
 }
 
-async function write(bytes){await cp.writeValueWithResponse(new Uint8Array(bytes));log('Wrote: '+bytes.map(b=>b.toString(16).padStart(2,'0')).join(' '));}
-$('erg').onclick=async()=>{
+// ---- FE-C over BLE: ANT+ FE-C pages wrapped in ANT broadcast messages ----
+// [A4 09 4E 05 | 8-byte page | XOR checksum]
+function antMsg(page){const m=[0xA4,0x09,0x4E,0x05,...page];m.push(m.reduce((a,b)=>a^b,0));return new Uint8Array(m);}
+function fecTargetPower(w){const q=Math.round(w*4);return antMsg([0x31,0xFF,0xFF,0xFF,0xFF,0xFF,q&255,(q>>8)&255]);} // page 49, 0.25 W units
+function fecGrade(g){const q=Math.round((g+200)*100);return antMsg([0x33,0xFF,0xFF,0xFF,0xFF,q&255,(q>>8)&255,0xFF]);} // page 51, 0.01 % units, -200 % offset
+
+const seenPages=new Set();
+function parseFec(v){
+  if(v.byteLength<12||v.getUint8(0)!==0xA4)return;
+  const p=new DataView(v.buffer,v.byteOffset+4,8), page=p.getUint8(0);
+  if(!seenPages.has(page)){seenPages.add(page);log('FE-C page 0x'+page.toString(16).padStart(2,'0')+': '+hex(p));}
+  if(page===0x10){ // General FE data: speed in 0.001 m/s
+    show('speed',(p.getUint16(4,true)*0.0036).toFixed(1));
+  }else if(page===0x19){ // Specific trainer data: cadence, 12-bit instantaneous power
+    const c=p.getUint8(2); show('cadence',c===0xFF?'--':c);
+    const w=p.getUint8(5)|((p.getUint8(6)&0x0F)<<8); show('power',w===0xFFF?'--':w);
+  }else if(page===0x47){ // Command status
+    log('FE-C command status: '+hex(p));
+  }
+}
+
+async function useFec(server){
   try{
-    const w=Math.max(0,Math.min(2000,parseInt($('target').value)||0));
-    await write([0x00]);           // Request Control
-    await write([0x07]);           // Start/Resume
-    await write([0x05,w&255,(w>>8)&255]); // Set Target Power
-  }catch(e){log('ERG failed: '+e.message);}
+    const s=await server.getPrimaryService(FEC);
+    const rx=await s.getCharacteristic(FEC_RX), tx=await s.getCharacteristic(FEC_TX);
+    rx.addEventListener('characteristicvaluechanged',e=>parseFec(e.target.value));
+    await rx.startNotifications(); log('Subscribed to FE-C over BLE');
+    const write=async m=>{
+      if(tx.properties.write)await tx.writeValueWithResponse(m);else await tx.writeValueWithoutResponse(m);
+      log('Wrote: '+hex(new DataView(m.buffer)));
+    };
+    setCtl({name:'FE-C',
+      async setPower(w){await write(fecTargetPower(w));},
+      async stop(){await write(fecGrade(0));}}); // leave ERG by switching to flat-road simulation
+    log('FE-C control ready');
+    return true;
+  }catch(e){log('No FE-C: '+e.message);return false;}
+}
+
+// ---- Cycling Power (read-only) ----
+// Cadence and speed come from cumulative crank/wheel revolutions between notifications.
+let lastCrank=null, lastWheel=null, crankIdle=0, wheelIdle=0;
+function revRate(prev,revs,time,revMod,timeMod,ticks){
+  if(!prev)return null;
+  const dr=(revs-prev.revs+revMod)%revMod, dt=(time-prev.time+timeMod)%timeMod;
+  return dt?dr/(dt/ticks):null; // revolutions per second, null when no new event
+}
+function parseCps(v){
+  const fl=v.getUint16(0,true); let o=4;
+  show('power',v.getInt16(2,true));
+  if(fl&1)o+=1;  // pedal power balance
+  if(fl&4)o+=2;  // accumulated torque
+  if(fl&16){     // wheel revolution data
+    const revs=v.getUint32(o,true), time=v.getUint16(o+4,true); o+=6;
+    const r=revRate(lastWheel,revs,time,2**32,65536,2048);
+    if(r!==null){show('speed',(r*WHEEL_M*3.6).toFixed(1));wheelIdle=0;}else if(++wheelIdle>3)show('speed','0.0');
+    lastWheel={revs,time};
+  }
+  if(fl&32){     // crank revolution data
+    const revs=v.getUint16(o,true), time=v.getUint16(o+2,true); o+=4;
+    const r=revRate(lastCrank,revs,time,65536,65536,1024);
+    if(r!==null){show('cadence',Math.round(r*60));crankIdle=0;}else if(++crankIdle>3)show('cadence','0');
+    lastCrank={revs,time};
+  }
+}
+
+async function useCps(server){
+  try{
+    const c=await (await server.getPrimaryService(CPS)).getCharacteristic(0x2A63);
+    lastCrank=lastWheel=null;
+    c.addEventListener('characteristicvaluechanged',e=>parseCps(e.target.value));
+    await c.startNotifications(); log('Subscribed to Cycling Power (no resistance control)');
+  }catch(e){log('No Cycling Power: '+e.message);}
+}
+
+$('erg').onclick=async()=>{
+  try{await ctl.setPower(Math.max(0,Math.min(2000,parseInt($('target').value)||0)));}
+  catch(e){log('ERG failed: '+e.message);}
 };
-$('ergoff').onclick=async()=>{try{await write([0x08,0x01]);await write([0x01]);}catch(e){log('Stop failed: '+e.message);}};
+$('ergoff').onclick=async()=>{try{await ctl.stop();}catch(e){log('Stop failed: '+e.message);}};
 </script>
 </body>
 </html>
