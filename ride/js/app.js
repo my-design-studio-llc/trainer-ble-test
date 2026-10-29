@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -125,7 +125,7 @@ function setRoute(r) {
 
 async function startRide() {
   // Phones ride in landscape full screen. Requested before any await, while the tap still counts.
-  if (matchMedia('(pointer: coarse)').matches) enterFullscreen();
+  const fullscreenTry = matchMedia('(pointer: coarse)').matches ? enterFullscreen() : null;
   readSettingsForm();
   showError('');
   const startD = Math.min(Math.max(0, Number($('start-km').value) * 1000 || 0), route.total - 1);
@@ -157,6 +157,8 @@ async function startRide() {
   }
 
   $('attribution').textContent = attribution;
+  fullscreenTry?.then((problem) => problem && flashBanner(problem));
+  keepScreenOn();
   ride = {
     route: r,
     d: startD,
@@ -293,6 +295,14 @@ function showBanner(text) {
   $('banner').hidden = false;
 }
 
+/** A banner that clears itself after a while, unless something else replaced it. */
+function flashBanner(text, ms = 8000) {
+  showBanner(text);
+  setTimeout(() => {
+    if ($('banner').textContent === text) $('banner').hidden = true;
+  }, ms);
+}
+
 function setupRideControls() {
   // The profile and minimap sit above the controls, which wrap onto more rows on narrow screens.
   // The resistance bar fits between the HUD and the minimap.
@@ -335,7 +345,11 @@ function setupRideControls() {
   $('connect-hr').addEventListener('click', () => connectDevice(hrm, 'connect-hr'));
 
   setupResistBar();
-  $('fullscreen').addEventListener('click', () => (document.fullscreenElement ? exitFullscreen() : enterFullscreen(true)));
+  $('fullscreen').addEventListener('click', async () => {
+    if (fullscreenElement()) return exitFullscreen();
+    const problem = await enterFullscreen();
+    if (problem) flashBanner(problem);
+  });
   $('pause').addEventListener('click', togglePause);
   document.addEventListener('keydown', (e) => {
     if (!ride || $('ride').hidden || e.target.tagName === 'INPUT') return;
@@ -352,6 +366,7 @@ function setupRideControls() {
     ride = null;
     updateResistBar();
     exitFullscreen();
+    releaseScreen();
     $('ride').hidden = true;
     $('setup').hidden = false;
   });
@@ -414,31 +429,76 @@ function updateResistBar() {
   $('res-auto').classList.toggle('on', !manual);
 }
 
+// ---------- screen wake lock ----------
+// Keeps the phone from dimming and locking mid-ride. The browser drops the lock whenever
+// the page is hidden, so it is taken again when the page comes back.
+
+let wakeLock = null;
+
+async function keepScreenOn() {
+  if (!('wakeLock' in navigator)) return flashBanner('This browser cannot keep the screen on; raise the screen timeout in system settings.');
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => (wakeLock = null));
+  } catch (err) {
+    flashBanner(`Could not keep the screen on (${err.name}).`);
+  }
+}
+
+function releaseScreen() {
+  wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && ride && !wakeLock) keepScreenOn();
+});
+
 // ---------- full screen ----------
 
 const FS_ENTER = 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5';
 const FS_EXIT = 'M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5';
 
-/** Full screen, then landscape where the browser allows the lock (Android Chrome does). */
-async function enterFullscreen(reportErrors = false) {
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-    updateFsButton();
-    await screen.orientation?.lock?.('landscape').catch(() => {});
-  } catch (err) {
-    if (reportErrors) showBanner(`Full screen not available: ${err.message}`);
+const HOME_SCREEN_HINT = 'Or add Ride 3D to the home screen (Chrome menu, Add to Home screen) and open it from there.';
+
+const fullscreenElement = () => document.fullscreenElement ?? document.webkitFullscreenElement ?? null;
+
+/**
+ * Full screen, then landscape where the browser allows the lock (Android Chrome does).
+ * Resolves to a message describing what didn't work, or '' when all is well.
+ */
+async function enterFullscreen() {
+  const el = document.documentElement;
+  const request = el.requestFullscreen ?? el.webkitRequestFullscreen;
+  if (!request || document.fullscreenEnabled === false) {
+    return `This browser view does not allow full screen. Open the page in Chrome. ${HOME_SCREEN_HINT}`;
   }
+  try {
+    if (!fullscreenElement()) await request.call(el, { navigationUI: 'hide' });
+  } catch (err) {
+    return `Full screen was refused (${err.name}: ${err.message}). ${HOME_SCREEN_HINT}`;
+  } finally {
+    updateFsButton();
+  }
+  try {
+    await screen.orientation?.lock?.('landscape');
+  } catch (err) {
+    return `Full screen is on, but the browser would not lock landscape (${err.name}). Turn the phone sideways.`;
+  }
+  return '';
 }
 
 function exitFullscreen() {
   screen.orientation?.unlock?.();
-  if (document.fullscreenElement) document.exitFullscreen().then(updateFsButton, () => {});
+  const exit = document.exitFullscreen ?? document.webkitExitFullscreen;
+  if (fullscreenElement() && exit) Promise.resolve(exit.call(document)).then(updateFsButton, () => {});
 }
 
 document.addEventListener('fullscreenchange', updateFsButton);
+document.addEventListener('webkitfullscreenchange', updateFsButton);
 
 function updateFsButton() {
-  const on = Boolean(document.fullscreenElement);
+  const on = Boolean(fullscreenElement());
   $('fs-icon').setAttribute('d', on ? FS_EXIT : FS_ENTER);
   $('fullscreen').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
   $('fullscreen').title = on ? 'Exit full screen' : 'Full screen, landscape';

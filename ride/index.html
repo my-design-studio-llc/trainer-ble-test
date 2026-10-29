@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ride 3D</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon-192.png" />
+    <meta name="theme-color" content="#111316" />
   </head>
   <body>
     <section id="setup" class="screen">
@@ -42,6 +45,7 @@
       <button id="start" class="primary" disabled>Start ride</button>
       <p id="setup-error" class="error"></p>
       <p class="hint">Web Bluetooth needs Chrome on Android or desktop Chrome / Edge. <a href="../">Trainer connection test</a></p>
+      <p class="hint">On a phone, Start ride goes full screen in landscape and keeps the screen on. For an app that always opens full screen: Chrome menu, Add to Home screen (or Install app), then open Ride 3D from the home screen.</p>
     </section>
 
     <section id="ride" class="screen" hidden>

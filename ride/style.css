@@ -169,9 +169,12 @@ select {
 
 #banner {
   position: absolute;
-  top: 16px;
+  z-index: 20; /* above the HUD, so messages are never hidden behind it */
+  top: calc(var(--hud-h, 60px) + 28px);
   left: 50%;
   transform: translateX(-50%);
+  max-width: min(520px, calc(100% - 96px));
+  text-align: center;
   background: var(--overlay);
   padding: 8px 16px;
   border-radius: 8px;
