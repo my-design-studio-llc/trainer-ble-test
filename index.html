@@ -71,6 +71,8 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
     </div>
     <div class="row">
       <button id="resdown" class="ghost" disabled>&minus;5%</button>
+      <button id="resdown1" class="ghost" disabled>&minus;1%</button>
+      <button id="resup1" class="ghost" disabled>+1%</button>
       <button id="resup" class="ghost" disabled>+5%</button>
       <button id="resset" disabled>Set resistance</button>
     </div>
@@ -83,7 +85,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.3.0'; // bump on every change so the page shows when it has updated
+const VERSION='0.3.1'; // bump on every change so the page shows when it has updated
 const FTMS=0x1826, CPS=0x1818;
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
@@ -136,7 +138,7 @@ $('connect').onclick=async()=>{
 $('disconnect').onclick=()=>{device?.gatt?.disconnect();};
 
 function ui(on){$('disconnect').disabled=!on;$('connect').disabled=on;if(!on){setCtl(null);['power','cadence','speed'].forEach(k=>show(k,'--'));}}
-function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;['res','resdown','resup','resset'].forEach(k=>$(k).disabled=!c?.setResistance);$('proto').textContent=c?'via '+c.name:'';}
+function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;['res','resdown','resdown1','resup1','resup','resset'].forEach(k=>$(k).disabled=!c?.setResistance);$('proto').textContent=c?'via '+c.name:'';}
 function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}
 
 // ---- FTMS ----
@@ -264,8 +266,9 @@ async function sendRes(){try{await ctl.setResistance(resPct());}catch(e){log('Re
 $('res').oninput=()=>{$('resval').textContent=resPct()+'%';};
 $('res').onchange=sendRes; // send when the slider is released
 $('resset').onclick=sendRes;
-$('resdown').onclick=()=>{$('res').value=resPct()-5;$('res').oninput();sendRes();};
-$('resup').onclick=()=>{$('res').value=resPct()+5;$('res').oninput();sendRes();};
+const stepRes=d=>()=>{$('res').value=resPct()+d;$('res').oninput();sendRes();};
+$('resdown').onclick=stepRes(-5);$('resdown1').onclick=stepRes(-1);
+$('resup1').onclick=stepRes(1);$('resup').onclick=stepRes(5);
 $('ergoff').onclick=async()=>{try{await ctl.stop();}catch(e){log('Stop failed: '+e.message);}};
 </script>
 </body>
