@@ -1,0 +1,334 @@
+:root {
+  --accent: #fc5200;
+  --bg: #111316;
+  --card: #1c1f24;
+  --text: #f2f2f2;
+  --muted: #9aa0a6;
+  --overlay: rgba(10, 12, 15, 0.72);
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+button,
+.btn,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+.btn {
+  background: #2b2f36;
+  border: 1px solid #3a3f47;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+button:hover,
+.btn:hover {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.primary,
+.btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+}
+
+input,
+select {
+  background: #13161a;
+  border: 1px solid #3a3f47;
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+/* ---------- setup ---------- */
+
+#setup {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#setup h1 {
+  margin: 0 0 4px;
+  color: var(--accent);
+}
+
+#setup h1 small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+#setup header p,
+.hint {
+  color: var(--muted);
+  margin: 0;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.card select {
+  margin-top: 0;
+}
+
+.card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 10px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.row input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0 12px;
+}
+
+.error {
+  color: #ff6b6b;
+  min-height: 1.2em;
+}
+
+#start {
+  padding: 14px;
+  font-size: 1.1rem;
+}
+
+/* ---------- ride ---------- */
+
+#ride {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+#pano {
+  position: absolute;
+  inset: 0;
+}
+
+#banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--overlay);
+  padding: 8px 16px;
+  border-radius: 8px;
+}
+
+#attribution {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  max-width: 50%;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 0 3px #000;
+  text-align: right;
+}
+
+#hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+}
+
+#hud > div {
+  background: var(--overlay);
+  border-radius: 10px;
+  padding: 6px 12px;
+  min-width: 84px;
+}
+
+#hud span {
+  font-size: 1.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#hud small {
+  margin-left: 4px;
+  color: var(--muted);
+}
+
+#profile {
+  position: absolute;
+  left: 16px;
+  bottom: calc(var(--controls-h, 40px) + 32px);
+  height: 64px;
+  width: calc(100% - 312px);
+  background: var(--overlay);
+  border-radius: 10px;
+}
+
+#minimap {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--controls-h, 40px) + 32px);
+  width: 264px;
+  height: 200px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+}
+
+#controls {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+#controls select {
+  width: auto;
+}
+
+#controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--overlay);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+
+#controls label input {
+  width: 72px;
+  padding: 6px;
+}
+
+#controls button.connected {
+  border-color: #2ecc71;
+  color: #2ecc71;
+}
+
+@media (max-width: 720px) {
+  #hud {
+    top: 8px;
+    left: 8px;
+    max-width: calc(100% - 16px);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+  }
+  #hud > div {
+    min-width: 0;
+    padding: 4px 6px;
+    white-space: nowrap;
+  }
+  #hud span {
+    font-size: 1.15rem;
+  }
+  #hud small {
+    font-size: 0.7rem;
+    margin-left: 2px;
+  }
+  #hud > div:last-child small {
+    display: none; /* "time" is clear from the h:mm:ss format */
+  }
+  #hud > div:nth-child(6) {
+    grid-column: span 2;
+  }
+  #attribution {
+    top: auto;
+    bottom: 2px;
+    left: 8px;
+    right: 8px;
+    max-width: none;
+    font-size: 9px;
+    text-align: left;
+  }
+  #controls {
+    left: 8px;
+    right: 8px;
+    bottom: 26px;
+    gap: 6px;
+  }
+  #controls select {
+    flex: 1 1 100%;
+  }
+  #controls button {
+    padding: 8px 10px;
+  }
+  #minimap {
+    right: 8px;
+    bottom: calc(var(--controls-h, 40px) + 34px);
+    width: 120px;
+    height: 96px;
+  }
+  #profile {
+    left: 8px;
+    bottom: calc(var(--controls-h, 40px) + 34px);
+    height: 48px;
+    width: calc(100% - 144px);
+  }
+}

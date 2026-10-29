@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ride 3D</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <section id="setup" class="screen">
+      <header>
+        <h1>Ride 3D <small id="ver"></small></h1>
+        <p>Ride a real route on your smart trainer through a 3D scene built from satellite imagery and terrain. The road grade sets the trainer's resistance.</p>
+      </header>
+
+      <div class="card">
+        <h2>Route</h2>
+        <p><button type="button" id="load-sample">Load sample: Cross Kirkland Corridor, South Kirkland to Totem Lake (5.8 mi, flat)</button></p>
+        <p class="hint">Or upload a GPX / TCX file exported from a ride app or bike computer.</p>
+        <input type="file" id="file-input" accept=".gpx,.tcx,application/gpx+xml" />
+      </div>
+
+      <div class="card" id="route-card" hidden>
+        <h2 id="route-name"></h2>
+        <p id="route-stats"></p>
+        <div class="row">
+          <button id="export-csv">Export points CSV</button>
+          <button id="export-json">Export points JSON</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Settings</h2>
+        <div class="grid">
+          <label>Satellite imagery<select id="imagery"></select></label>
+          <label>Rider + bike weight (kg)<input id="mass" type="number" min="30" max="200" step="1" /></label>
+          <label>Trainer grade difficulty (%)<input id="difficulty" type="number" min="0" max="100" step="5" /></label>
+          <label>Start at (km)<input id="start-km" type="number" min="0" step="0.1" value="0" /></label>
+        </div>
+      </div>
+
+      <button id="start" class="primary" disabled>Start ride</button>
+      <p id="setup-error" class="error"></p>
+      <p class="hint">Web Bluetooth needs Chrome on Android or desktop Chrome / Edge. <a href="../">Trainer connection test</a></p>
+    </section>
+
+    <section id="ride" class="screen" hidden>
+      <div id="pano"></div>
+      <div id="banner" hidden></div>
+      <div id="attribution"></div>
+
+      <div id="hud">
+        <div><span id="hud-speed">0.0</span><small>km/h</small></div>
+        <div><span id="hud-power">--</span><small>W</small></div>
+        <div><span id="hud-cadence">--</span><small>rpm</small></div>
+        <div><span id="hud-hr">--</span><small>bpm</small></div>
+        <div><span id="hud-grade">0.0</span><small>%</small></div>
+        <div><span id="hud-distance">0.00</span><small id="hud-total">/ 0 km</small></div>
+        <div><span id="hud-time">0:00:00</span><small>time</small></div>
+      </div>
+
+      <canvas id="profile"></canvas>
+      <div id="minimap"></div>
+
+      <div id="controls">
+        <select id="mode">
+          <option value="power">Power based (recommended)</option>
+          <option value="trainer-speed">Trainer speed</option>
+          <option value="replay">Replay recorded pace</option>
+          <option value="manual">Manual speed</option>
+        </select>
+        <label id="replay-speed-wrap">Speed ×<input id="replay-speed" type="number" min="0.25" max="20" step="0.25" value="1" /></label>
+        <label id="manual-speed-wrap">km/h<input id="manual-speed" type="number" min="0" max="80" step="1" value="25" /></label>
+        <button id="connect-trainer">Connect trainer</button>
+        <button id="connect-hr">Connect heart rate</button>
+        <button id="pause">Pause</button>
+        <button id="export-tcx">Export TCX</button>
+        <button id="exit">Exit</button>
+      </div>
+    </section>
+
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three/three.module.min.js" } }
+    </script>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

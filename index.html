@@ -34,6 +34,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 <body>
 <main>
   <h1>Smart Trainer Connection Test <small id="ver" style="font-size:13px;font-weight:400;color:var(--muted);font-family:var(--mono)"></small></h1>
+  <p><a href="ride/">Ride 3D</a>: ride a route on your trainer in a 3D scene.</p>
   <p>Open in Chrome on Android. Supports FTMS, FE-C over BLE and Cycling Power (read-only). Power on the trainer, turn on Bluetooth and Location on your phone, and close any training app that may be holding the trainer&rsquo;s Bluetooth connection.</p>
 
   <section>
@@ -85,7 +86,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.3.1'; // bump on every change so the page shows when it has updated
+const VERSION='0.4.0'; // bump on every change so the page shows when it has updated
 const FTMS=0x1826, CPS=0x1818;
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
