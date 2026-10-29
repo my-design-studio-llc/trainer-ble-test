@@ -63,18 +63,32 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
   </section>
 
   <section>
+    <strong>Resistance mode (fixed resistance)</strong>
+    <p>Resistance stays where you set it, so power rises with cadence and gear instead of being held at a target.</p>
+    <div class="row">
+      <input id="res" type="range" min="0" max="100" step="1" value="20" style="flex:1;min-width:160px;padding:0" disabled>
+      <b id="resval" style="font-family:var(--mono);min-width:48px;text-align:right">20%</b>
+    </div>
+    <div class="row">
+      <button id="resdown" class="ghost" disabled>&minus;5%</button>
+      <button id="resup" class="ghost" disabled>+5%</button>
+      <button id="resset" disabled>Set resistance</button>
+    </div>
+  </section>
+
+  <section>
     <strong>Log</strong>
     <pre id="log"></pre>
   </section>
 </main>
 
 <script>
-const VERSION='0.2.0'; // bump on every change so the page shows when it has updated
+const VERSION='0.3.0'; // bump on every change so the page shows when it has updated
 const FTMS=0x1826, CPS=0x1818;
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
 const $=id=>document.getElementById(id);
-let device=null, ctl=null; // ctl: {name, setPower(w), stop()}
+let device=null, ctl=null, resRange=[0,100]; // ctl: {name, setPower(w), stop()}
 
 function log(m){const t=new Date().toLocaleTimeString();$('log').textContent=`[${t}] ${m}\n`+$('log').textContent;}
 function setStatus(t,c){const s=$('status');s.textContent=t;s.className='status '+(c||'');}
@@ -122,7 +136,7 @@ $('connect').onclick=async()=>{
 $('disconnect').onclick=()=>{device?.gatt?.disconnect();};
 
 function ui(on){$('disconnect').disabled=!on;$('connect').disabled=on;if(!on){setCtl(null);['power','cadence','speed'].forEach(k=>show(k,'--'));}}
-function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;$('proto').textContent=c?'via '+c.name:'';}
+function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;['res','resdown','resup','resset'].forEach(k=>$(k).disabled=!c?.setResistance);$('proto').textContent=c?'via '+c.name:'';}
 function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}
 
 // ---- FTMS ----
@@ -139,7 +153,13 @@ async function useFtms(server){
       const write=async b=>{await cp.writeValueWithResponse(new Uint8Array(b));log('Wrote: '+hex(new DataView(new Uint8Array(b).buffer)));};
       setCtl({name:'FTMS',
         async setPower(w){await write([0x00]);await write([0x07]);await write([0x05,w&255,(w>>8)&255]);}, // Request Control, Start, Set Target Power
+        async setResistance(pct){ // map % onto the trainer's supported resistance range (0.1 units)
+          const [lo,hi]=resRange, q=Math.round(lo+(hi-lo)*pct/100);
+          await write([0x00]);await write([0x07]);
+          await write(hi<=255?[0x04,q]:[0x04,q&255,(q>>8)&255]);},
         async stop(){await write([0x08,0x01]);await write([0x01]);}}); // Stop, Reset
+      try{const r=await (await f.getCharacteristic(0x2AD6)).readValue();resRange=[r.getInt16(0,true),r.getInt16(2,true)];log('FTMS resistance range: '+resRange.join('..')+' (0.1 units)');}
+      catch(e){log('No resistance range, assuming 0..100: '+e.message);}
       log('FTMS control point ready');
     }catch(e){log('Control point unavailable: '+e.message);}
     return true;
@@ -162,6 +182,7 @@ function parseBike(v){
 // [A4 09 4E 05 | 8-byte page | XOR checksum]
 function antMsg(page){const m=[0xA4,0x09,0x4E,0x05,...page];m.push(m.reduce((a,b)=>a^b,0));return new Uint8Array(m);}
 function fecTargetPower(w){const q=Math.round(w*4);return antMsg([0x31,0xFF,0xFF,0xFF,0xFF,0xFF,q&255,(q>>8)&255]);} // page 49, 0.25 W units
+function fecResistance(pct){return antMsg([0x30,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,Math.round(pct*2)]);} // page 48, 0.5 % units
 function fecGrade(g){const q=Math.round((g+200)*100);return antMsg([0x33,0xFF,0xFF,0xFF,0xFF,q&255,(q>>8)&255,0xFF]);} // page 51, 0.01 % units, -200 % offset
 
 const seenPages=new Set();
@@ -191,6 +212,7 @@ async function useFec(server){
     };
     setCtl({name:'FE-C',
       async setPower(w){await write(fecTargetPower(w));},
+      async setResistance(pct){await write(fecResistance(pct));},
       async stop(){await write(fecGrade(0));}}); // leave ERG by switching to flat-road simulation
     log('FE-C control ready');
     return true;
@@ -237,6 +259,13 @@ $('erg').onclick=async()=>{
   try{await ctl.setPower(Math.max(0,Math.min(2000,parseInt($('target').value)||0)));}
   catch(e){log('ERG failed: '+e.message);}
 };
+const resPct=()=>Math.max(0,Math.min(100,parseInt($('res').value)||0));
+async function sendRes(){try{await ctl.setResistance(resPct());}catch(e){log('Resistance failed: '+e.message);}}
+$('res').oninput=()=>{$('resval').textContent=resPct()+'%';};
+$('res').onchange=sendRes; // send when the slider is released
+$('resset').onclick=sendRes;
+$('resdown').onclick=()=>{$('res').value=resPct()-5;$('res').oninput();sendRes();};
+$('resup').onclick=()=>{$('res').value=resPct()+5;$('res').oninput();sendRes();};
 $('ergoff').onclick=async()=>{try{await ctl.stop();}catch(e){log('Stop failed: '+e.message);}};
 </script>
 </body>
