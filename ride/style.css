@@ -287,6 +287,13 @@ select {
   font-size: 1.1rem;
 }
 
+#resist #fullscreen {
+  display: grid;
+  place-items: center;
+  padding: 6px 0 4px;
+  margin-bottom: 4px;
+}
+
 #resist #res-auto {
   font-size: 0.75rem;
 }

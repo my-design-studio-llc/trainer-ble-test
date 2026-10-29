@@ -24,7 +24,7 @@ Ride a real route through a 3D scene built in the browser from satellite imagery
 - The road grade is sent to the trainer (FTMS simulation or FE-C track resistance), scaled by a difficulty setting
 - Speed modes: power based (power, grade, weight and drag), trainer speed, replay of recorded pace, manual
 - Vertical resistance bar: drag (or ±1 %) for a fixed trainer resistance, Auto to follow the road grade again
-- Landscape button: fullscreen and landscape lock on phones
+- Full screen: on phones, Start ride goes full screen and locks landscape; the button at the top of the right-hand bar toggles it
 - Heart rate strap support, TCX export of the ride (power, cadence, heart rate)
 
 Data sources: imagery from Esri World Imagery or Sentinel-2 cloudless (EOX), elevation from AWS Terrain Tiles,

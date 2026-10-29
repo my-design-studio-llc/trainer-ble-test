@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -124,6 +124,8 @@ function setRoute(r) {
 // ---------- ride ----------
 
 async function startRide() {
+  // Phones ride in landscape full screen. Requested before any await, while the tap still counts.
+  if (matchMedia('(pointer: coarse)').matches) enterFullscreen();
   readSettingsForm();
   showError('');
   const startD = Math.min(Math.max(0, Number($('start-km').value) * 1000 || 0), route.total - 1);
@@ -148,6 +150,7 @@ async function startRide() {
     view?.dispose?.();
     $('ride').hidden = true;
     $('setup').hidden = false;
+    exitFullscreen();
     return showError(err.message);
   } finally {
     $('start').disabled = false;
@@ -332,7 +335,7 @@ function setupRideControls() {
   $('connect-hr').addEventListener('click', () => connectDevice(hrm, 'connect-hr'));
 
   setupResistBar();
-  $('landscape').addEventListener('click', toggleLandscape);
+  $('fullscreen').addEventListener('click', () => (document.fullscreenElement ? exitFullscreen() : enterFullscreen(true)));
   $('pause').addEventListener('click', togglePause);
   document.addEventListener('keydown', (e) => {
     if (!ride || $('ride').hidden || e.target.tagName === 'INPUT') return;
@@ -348,7 +351,7 @@ function setupRideControls() {
     ride.view.dispose?.();
     ride = null;
     updateResistBar();
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    exitFullscreen();
     $('ride').hidden = true;
     $('setup').hidden = false;
   });
@@ -411,25 +414,35 @@ function updateResistBar() {
   $('res-auto').classList.toggle('on', !manual);
 }
 
-// ---------- landscape ----------
+// ---------- full screen ----------
 
-async function toggleLandscape() {
+const FS_ENTER = 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5';
+const FS_EXIT = 'M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5';
+
+/** Full screen, then landscape where the browser allows the lock (Android Chrome does). */
+async function enterFullscreen(reportErrors = false) {
   try {
-    if (document.fullscreenElement) {
-      screen.orientation?.unlock?.();
-      await document.exitFullscreen();
-    } else {
-      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-      await screen.orientation?.lock?.('landscape').catch(() => {}); // not every browser allows the lock
-    }
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    updateFsButton();
+    await screen.orientation?.lock?.('landscape').catch(() => {});
   } catch (err) {
-    showBanner(`Fullscreen not available: ${err.message}`);
+    if (reportErrors) showBanner(`Full screen not available: ${err.message}`);
   }
 }
 
-document.addEventListener('fullscreenchange', () => {
-  $('landscape').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Landscape';
-});
+function exitFullscreen() {
+  screen.orientation?.unlock?.();
+  if (document.fullscreenElement) document.exitFullscreen().then(updateFsButton, () => {});
+}
+
+document.addEventListener('fullscreenchange', updateFsButton);
+
+function updateFsButton() {
+  const on = Boolean(document.fullscreenElement);
+  $('fs-icon').setAttribute('d', on ? FS_EXIT : FS_ENTER);
+  $('fullscreen').setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+  $('fullscreen').title = on ? 'Exit full screen' : 'Full screen, landscape';
+}
 
 function togglePause() {
   if (!ride || ride.finished) return;
