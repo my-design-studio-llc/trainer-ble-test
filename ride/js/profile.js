@@ -15,7 +15,8 @@ export class ElevationProfile {
     this.max = Math.max(max, min + 20);
   }
 
-  draw(d) {
+  /** `dragging` shows the distance next to the marker while the rider is being moved. */
+  draw(d, { dragging = false } = {}) {
     const { canvas, ctx, route } = this;
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
@@ -50,5 +51,23 @@ export class ElevationProfile {
 
     ctx.fillStyle = '#fff';
     ctx.fillRect(x(d) - 1, 0, 2, h);
+
+    // Tap/drag hint and live distance readout.
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    if (dragging) {
+      const label = `${(d / 1000).toFixed(2)} km`;
+      const tw = ctx.measureText(label).width + 10;
+      const lx = Math.min(Math.max(0, x(d) - tw / 2), w - tw);
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(lx, 2, tw, 16);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, lx + 5, 4);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.textAlign = 'right';
+      ctx.fillText('drag to move', w - 6, 4);
+      ctx.textAlign = 'left';
+    }
   }
 }

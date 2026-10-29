@@ -86,7 +86,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.4.0'; // bump on every change so the page shows when it has updated
+const VERSION='0.4.1'; // bump on every change so the page shows when it has updated
 const FTMS=0x1826, CPS=0x1818;
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
@@ -98,6 +98,7 @@ function setStatus(t,c){const s=$('status');s.textContent=t;s.className='status 
 function show(k,v){$(k).textContent=v;}
 
 $('ver').textContent='v'+VERSION; log('Page version '+VERSION);
+navigator.serviceWorker?.register('sw.js').catch(()=>{}); // keeps the site's files fresh
 
 (async()=>{
   if(!navigator.bluetooth){setStatus('This browser does not support Web Bluetooth (or it is blocked by the page frame)','bad');log('navigator.bluetooth is missing. Use Chrome on Android.');$('connect').disabled=true;return;}

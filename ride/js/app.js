@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -57,6 +57,7 @@ const hrm = new HeartRateMonitor();
 
 function init() {
   $('ver').textContent = `v${VERSION}`;
+  navigator.serviceWorker?.register('../sw.js').catch(() => {}); // keeps the site's files fresh
   $('mass').value = settings.mass;
   $('difficulty').value = settings.difficulty;
   $('mode').value = settings.mode;
@@ -258,7 +259,7 @@ function frame(now) {
 
   ride.view.update(ride.d, dt);
   ride.minimap.update(here.lat, here.lng);
-  ride.profile.draw(ride.d);
+  ride.profile.draw(ride.d, { dragging: ride.dragging });
   renderHud(here, trainerFresh, now);
   ride.raf = requestAnimationFrame(frame);
 }
@@ -432,12 +433,18 @@ function setupProfileDrag() {
   };
   canvas.addEventListener('pointerdown', (e) => {
     if (!ride || ride.busy) return;
+    e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
+    ride.dragging = true;
     jumpTo(at(e));
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (ride && !ride.busy && canvas.hasPointerCapture(e.pointerId)) jumpTo(at(e));
+    if (ride?.dragging && !ride.busy) jumpTo(at(e));
   });
+  const end = () => ride && (ride.dragging = false);
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('lostpointercapture', end);
 }
 
 /** U-turn: rebuild the route the other way and carry on from the same spot. */
