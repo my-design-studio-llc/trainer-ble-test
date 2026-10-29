@@ -1,4 +1,4 @@
-import { buildRoute, distanceAtTime, sampleAt } from './geo.js';
+import { buildRoute, distanceAtTime, reversePoints, sampleAt } from './geo.js';
 import { parseTrackFile } from './parsers.js';
 import { DEFAULT_RIDER, stepSpeed } from './physics.js';
 import { ElevationProfile } from './profile.js';
@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.3.1';
+const VERSION = '0.4.0';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -47,6 +47,7 @@ function saveSettings() {
 // ---------- state ----------
 
 let route = null;
+let routePoints = null; // raw track points of `route`, kept so the ride can be reversed
 let ride = null;
 const sensors = { power: undefined, cadence: undefined, speed: undefined, hr: undefined, trainerAt: 0, hrAt: 0 };
 const trainer = new Trainer();
@@ -89,7 +90,7 @@ async function onFile(e) {
   if (!file) return;
   try {
     const { name, points } = parseTrackFile(await file.text(), file.name);
-    setRoute(buildRoute(points, { name }));
+    setRoute(buildRoute(points, { name }), points);
   } catch (err) {
     showError(err.message);
   }
@@ -100,14 +101,16 @@ async function loadSample() {
     const res = await fetch(SAMPLE_GPX);
     if (!res.ok) throw new Error(`Could not load the sample route (${res.status})`);
     const { name, points } = parseTrackFile(await res.text(), 'sample.gpx');
-    setRoute(buildRoute(points, { name }));
+    setRoute(buildRoute(points, { name }), points);
   } catch (err) {
     showError(err.message);
   }
 }
 
-function setRoute(r) {
+function setRoute(r, points) {
   route = r;
+  routePoints = points;
+  $('reverse').checked = false;
   showError('');
   $('route-card').hidden = false;
   $('route-name').textContent = r.name;
@@ -128,18 +131,21 @@ async function startRide() {
   const fullscreenTry = matchMedia('(pointer: coarse)').matches ? enterFullscreen() : null;
   readSettingsForm();
   showError('');
-  const startD = Math.min(Math.max(0, Number($('start-km').value) * 1000 || 0), route.total - 1);
+  const reversed = $('reverse').checked;
+  const points = reversed ? reversePoints(routePoints) : routePoints;
+  const base = reversed ? buildRoute(points, { name: `${route.name} (reverse)` }) : route;
+  const startD = Math.min(Math.max(0, Number($('start-km').value) * 1000 || 0), base.total - 1);
 
   $('start').disabled = true;
-  let r = route;
+  let r = base;
   let view;
   let minimap;
   let attribution = '';
+  const imagery = createImagery(settings.imagery);
+  const dem = new DemSampler();
   try {
     const { Terrain3DView } = await loadTerrainView();
-    const imagery = createImagery(settings.imagery);
-    const dem = new DemSampler();
-    r = await prepareRoute3D(route, dem, showError);
+    r = await prepareRoute3D(base, dem, showError);
     showError('');
     showRideScreen();
     view = new Terrain3DView($('pano'), r, { dem, imagery, onStatus: showStatus });
@@ -161,6 +167,12 @@ async function startRide() {
   keepScreenOn();
   ride = {
     route: r,
+    points,
+    reversed,
+    dem,
+    imagery,
+    busy: false, // true while turning around
+    odometer: 0, // distance actually ridden, for the recording (jumps on the profile don't count)
     d: startD,
     v: 0,
     replayT: r.time[Math.floor(startD / r.step)],
@@ -195,6 +207,11 @@ function showRideScreen() {
 function frame(now) {
   const dt = Math.min(0.25, (now - ride.lastFrame) / 1000);
   ride.lastFrame = now;
+  if (ride.busy) {
+    ride.raf = requestAnimationFrame(frame);
+    return;
+  }
+  const before = ride.d;
   const { route } = ride;
   const here = sampleAt(route, ride.d);
   const rider = { ...DEFAULT_RIDER, mass: settings.mass };
@@ -225,6 +242,7 @@ function frame(now) {
       }
     }
     ride.elapsed += dt;
+    ride.odometer += Math.max(0, ride.d - before);
 
     if (ride.d >= route.total) {
       ride.d = route.total;
@@ -251,7 +269,7 @@ function recordSample(here, now) {
     lat: here.lat,
     lng: here.lng,
     ele: here.ele,
-    distance: ride.d,
+    distance: ride.odometer,
     speed: ride.v,
     power: now - sensors.trainerAt < 3000 ? sensors.power : undefined,
     cadence: now - sensors.trainerAt < 3000 ? sensors.cadence : undefined,
@@ -345,6 +363,8 @@ function setupRideControls() {
   $('connect-hr').addEventListener('click', () => connectDevice(hrm, 'connect-hr'));
 
   setupResistBar();
+  setupProfileDrag();
+  $('turn').addEventListener('click', turnAround);
   $('fullscreen').addEventListener('click', async () => {
     if (fullscreenElement()) return exitFullscreen();
     const problem = await enterFullscreen();
@@ -386,6 +406,77 @@ async function connectDevice(device, buttonId) {
 function markConnected(id, on, label) {
   $(id).classList.toggle('connected', on);
   $(id).textContent = label;
+}
+
+// ---------- moving along the route ----------
+
+/** Puts the rider at distance `d` (metres), snapping the camera there. */
+function jumpTo(d) {
+  ride.d = Math.min(Math.max(0, d), ride.route.total - 1);
+  ride.v = Math.min(ride.v, 3); // don't carry full speed into a new spot
+  ride.replayT = sampleAt(ride.route, ride.d).time;
+  ride.lastGradeSent = null;
+  if (ride.finished) {
+    ride.finished = false;
+    $('banner').hidden = true;
+  }
+  ride.view.update(ride.d, 0);
+}
+
+// Drag (or tap) the elevation profile to move along the route.
+function setupProfileDrag() {
+  const canvas = $('profile');
+  const at = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return (Math.min(Math.max(0, e.clientX - r.left), r.width) / r.width) * ride.route.total;
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!ride || ride.busy) return;
+    canvas.setPointerCapture(e.pointerId);
+    jumpTo(at(e));
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (ride && !ride.busy && canvas.hasPointerCapture(e.pointerId)) jumpTo(at(e));
+  });
+}
+
+/** U-turn: rebuild the route the other way and carry on from the same spot. */
+async function turnAround() {
+  if (!ride || ride.busy) return;
+  ride.busy = true;
+  $('turn').disabled = true;
+  showBanner('Turning around…');
+  const old = ride;
+  try {
+    const points = reversePoints(old.points);
+    const name = old.reversed ? route.name : `${route.name} (reverse)`;
+    const r = await prepareRoute3D(buildRoute(points, { name }), old.dem, showStatus); // terrain tiles are cached
+    const d = Math.min(Math.max(0, r.total * (1 - old.d / old.route.total)), r.total - 1);
+    const { Terrain3DView } = await loadTerrainView();
+    old.view.dispose();
+    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, onStatus: showStatus });
+    await view.start(d);
+    if (ride !== old) return view.dispose(); // exited meanwhile
+    Object.assign(ride, {
+      route: r,
+      points,
+      reversed: !old.reversed,
+      view,
+      d,
+      v: Math.min(old.v, 3),
+      replayT: sampleAt(r, d).time,
+      finished: false,
+      lastGradeSent: null,
+      minimap: new CanvasMiniMap($('minimap'), r),
+      profile: new ElevationProfile($('profile'), r),
+    });
+    flashBanner(ride.reversed ? 'Riding the route in reverse' : 'Riding the route forward', 3000);
+  } catch (err) {
+    flashBanner(`Could not turn around: ${err.message}`);
+  } finally {
+    if (ride === old) ride.busy = false;
+    $('turn').disabled = false;
+  }
 }
 
 // ---------- resistance bar ----------

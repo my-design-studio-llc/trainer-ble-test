@@ -114,6 +114,7 @@ export class Terrain3DView {
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     this.resize.disconnect();
     for (const t of this.tiles.values()) this.#dropTile(t);

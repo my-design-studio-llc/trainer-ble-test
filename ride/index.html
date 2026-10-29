@@ -26,6 +26,7 @@
       <div class="card" id="route-card" hidden>
         <h2 id="route-name"></h2>
         <p id="route-stats"></p>
+        <label class="check"><input type="checkbox" id="reverse" /> Ride in reverse</label>
         <div class="row">
           <button id="export-csv">Export points CSV</button>
           <button id="export-json">Export points JSON</button>
@@ -69,6 +70,9 @@
       <div id="resist" title="Trainer resistance. Auto follows the road grade.">
         <button id="fullscreen" aria-label="Full screen" title="Full screen, landscape">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path id="fs-icon" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+        </button>
+        <button id="turn" aria-label="Turn around" title="Turn around and ride back">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20V9a5 5 0 0 1 10 0v11"/><path d="M13 16l4 4 4-4"/></svg>
         </button>
         <button id="res-up" aria-label="Resistance up 1%">+</button>
         <b id="res-val">Auto</b>

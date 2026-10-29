@@ -24,6 +24,8 @@ Ride a real route through a 3D scene built in the browser from satellite imagery
 - The road grade is sent to the trainer (FTMS simulation or FE-C track resistance), scaled by a difficulty setting
 - Speed modes: power based (power, grade, weight and drag), trainer speed, replay of recorded pace, manual
 - Vertical resistance bar: drag (or ±1 %) for a fixed trainer resistance, Auto to follow the road grade again
+- Reverse: ride the route backwards, or Turn around mid-ride (U-turn button on the right-hand bar)
+- Drag or tap the elevation profile to jump to any point on the route
 - Full screen: on phones, Start ride goes full screen and locks landscape; the button at the top of the right-hand bar toggles it
 - Keeps the screen on during a ride (Screen Wake Lock)
 - Installable: Add to Home screen opens Ride 3D full screen in landscape

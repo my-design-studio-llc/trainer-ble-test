@@ -229,6 +229,11 @@ select {
   border-radius: 10px;
 }
 
+#profile {
+  cursor: ew-resize;
+  touch-action: none; /* dragging moves the rider, not the page */
+}
+
 #minimap {
   position: absolute;
   right: 16px;
@@ -290,10 +295,14 @@ select {
   font-size: 1.1rem;
 }
 
-#resist #fullscreen {
+#resist #fullscreen,
+#resist #turn {
   display: grid;
   place-items: center;
   padding: 6px 0 4px;
+}
+
+#resist #turn {
   margin-bottom: 4px;
 }
 
@@ -325,6 +334,17 @@ select {
 
 #resist :disabled {
   opacity: 0.4;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+label.check input {
+  width: auto;
 }
 
 #controls button.connected {

@@ -80,3 +80,22 @@ test('attachElevation interpolates a distance profile onto points', () => {
   assert.ok(Math.abs(out[100].ele - 120) < 0.5);
   assert.ok(Math.abs(out[25].ele - 125) < 0.5);
 });
+
+import { reversePoints } from '../ride/js/geo.js';
+
+test('reversePoints runs the track backwards with mirrored times', () => {
+  const pts = [
+    { lat: 1, lng: 2, ele: 10, t: 0 },
+    { lat: 1.001, lng: 2, ele: 12, t: 30 },
+    { lat: 1.002, lng: 2, ele: 15, t: 70 },
+  ];
+  const r = reversePoints(pts);
+  assert.deepEqual(r.map((p) => p.lat), [1.002, 1.001, 1]);
+  assert.deepEqual(r.map((p) => p.t), [0, 40, 70]);
+  assert.equal(pts[0].t, 0); // input untouched
+  assert.equal(reversePoints([{ lat: 1, lng: 2 }, { lat: 1.001, lng: 2 }])[0].t, undefined);
+  const fwd = buildRoute(pts);
+  const back = buildRoute(r);
+  assert.ok(Math.abs(fwd.total - back.total) < 1e-6);
+  assert.ok(Math.abs(back.ele[0] - fwd.ele[fwd.n - 1]) < 3);
+});

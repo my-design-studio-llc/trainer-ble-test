@@ -96,6 +96,14 @@ export function buildRoute(points, { step = 5, name = 'Route' } = {}) {
   return { name, step, n, total, lat, lng, ele, grade, heading, dist, time, hasEle, hasTime, climb: totalClimb(ele) };
 }
 
+/** The same track ridden the other way. Recorded times are mirrored so a replay still runs forward. */
+export function reversePoints(points) {
+  const tEnd = points.at(-1)?.t;
+  return points
+    .map((p) => ({ ...p, t: Number.isFinite(p.t) && Number.isFinite(tEnd) ? tEnd - p.t : undefined }))
+    .reverse();
+}
+
 /** Copy of `route` with a new elevation profile (one value per sample); extra fields are merged in. */
 export function withElevationProfile(route, ele, extra = {}) {
   const e = Float64Array.from(ele);
