@@ -15,6 +15,8 @@ import {
   parseHeartRate,
   parseFecMessage,
   encodeSimulation,
+  encodeResistance,
+  encodeFecBasicResistance,
   encodeFecTrackResistance,
   encodeFecWindResistance,
 } from './ble-protocol.js';
@@ -25,6 +27,7 @@ export class Trainer extends EventTarget {
   device = null;
   protocol = null; // 'FTMS' | 'FE-C' | 'Power'
   #control = null; // (params) => Promise, present when slope simulation works
+  #resist = null; // (pct) => Promise, present when fixed resistance works
   #queue = Promise.resolve();
   #lastCrank = null;
   #fecWindSent = false;
@@ -38,6 +41,10 @@ export class Trainer extends EventTarget {
     return Boolean(this.#control);
   }
 
+  get canResist() {
+    return Boolean(this.#resist);
+  }
+
   async connect() {
     this.device = await navigator.bluetooth.requestDevice({
       filters: [
@@ -49,6 +56,7 @@ export class Trainer extends EventTarget {
     });
     this.device.addEventListener('gattserverdisconnected', () => {
       this.#control = null;
+      this.#resist = null;
       this.dispatchEvent(new Event('disconnected'));
     });
     const server = await this.device.gatt.connect();
@@ -97,6 +105,14 @@ export class Trainer extends EventTarget {
       await cp.startNotifications(); // responses arrive as indications
       await cp.writeValueWithResponse(Uint8Array.of(FTMS_OP.REQUEST_CONTROL));
       await cp.writeValueWithResponse(Uint8Array.of(FTMS_OP.START_OR_RESUME));
+      let range = [0, 100];
+      try {
+        const r = await (await ftms.getCharacteristic(UUID.SUPPORTED_RESISTANCE_RANGE)).readValue();
+        range = [r.getInt16(0, true), r.getInt16(2, true)];
+      } catch {
+        /* range not published: assume 0-100 */
+      }
+      this.#resist = (pct) => cp.writeValueWithResponse(encodeResistance(pct, range));
       return (params) => cp.writeValueWithResponse(encodeSimulation(params));
     } catch (err) {
       console.warn('FTMS control unavailable', err);
@@ -118,6 +134,7 @@ export class Trainer extends EventTarget {
       const tx = await fec.getCharacteristic(FEC_BLE.TX);
       const write = (bytes) =>
         tx.properties.writeWithoutResponse ? tx.writeValueWithoutResponse(bytes) : tx.writeValueWithResponse(bytes);
+      this.#resist = (pct) => write(encodeFecBasicResistance(pct));
       return async ({ grade, crr, cw }) => {
         if (!this.#fecWindSent) {
           await write(encodeFecWindResistance(cw));
@@ -133,9 +150,17 @@ export class Trainer extends EventTarget {
 
   /** Sends a simulated grade. Writes are serialized because GATT allows one operation at a time. */
   setSimulation(params) {
-    const control = this.#control;
-    if (!control) return Promise.resolve();
-    this.#queue = this.#queue.then(() => control(params)).catch((err) => console.warn('setSimulation failed', err));
+    return this.#enqueue(this.#control, params, 'setSimulation');
+  }
+
+  /** Switches the trainer to a fixed resistance, 0-100 %. Sending a grade switches back. */
+  setResistance(pct) {
+    return this.#enqueue(this.#resist, pct, 'setResistance');
+  }
+
+  #enqueue(fn, arg, name) {
+    if (!fn) return Promise.resolve();
+    this.#queue = this.#queue.then(() => fn(arg)).catch((err) => console.warn(`${name} failed`, err));
     return this.#queue;
   }
 

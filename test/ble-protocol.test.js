@@ -76,3 +76,18 @@ test('FE-C trainer and general data pages', () => {
   // invalid power marker 0xFFF is dropped
   assert.deepEqual(parseFecMessage(dv([0xa4, 0x09, 0x4e, 0x05, 0x19, 0x01, 0xff, 0, 0, 0xff, 0x0f, 0, 0])), {});
 });
+
+import { encodeFecBasicResistance, encodeResistance } from '../ride/js/ble-protocol.js';
+
+test('FE-C basic resistance is page 0x30 in 0.5 % steps with a valid checksum', () => {
+  const m = encodeFecBasicResistance(40);
+  assert.deepEqual([...m.slice(0, 12)], [0xa4, 0x09, 0x4f, 0x05, 0x30, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 80]);
+  assert.equal(m[12], [...m.slice(0, 12)].reduce((x, b) => x ^ b, 0));
+  assert.equal(encodeFecBasicResistance(150)[11], 200);
+});
+
+test('FTMS resistance maps percent onto the supported range', () => {
+  assert.deepEqual([...encodeResistance(50)], [0x04, 50]);
+  assert.deepEqual([...encodeResistance(50, [0, 1000])], [0x04, 500 & 0xff, 500 >> 8]);
+  assert.deepEqual([...encodeResistance(120, [0, 200])], [0x04, 200]);
+});

@@ -62,6 +62,14 @@
       <canvas id="profile"></canvas>
       <div id="minimap"></div>
 
+      <div id="resist" title="Trainer resistance. Auto follows the road grade.">
+        <button id="res-up" aria-label="Resistance up 1%">+</button>
+        <b id="res-val">Auto</b>
+        <input id="res" type="range" min="0" max="100" step="1" value="20" aria-label="Resistance" />
+        <button id="res-down" aria-label="Resistance down 1%">&minus;</button>
+        <button id="res-auto" class="on">Auto</button>
+      </div>
+
       <div id="controls">
         <select id="mode">
           <option value="power">Power based (recommended)</option>
@@ -74,6 +82,7 @@
         <button id="connect-trainer">Connect trainer</button>
         <button id="connect-hr">Connect heart rate</button>
         <button id="pause">Pause</button>
+        <button id="landscape">Landscape</button>
         <button id="export-tcx">Export TCX</button>
         <button id="exit">Exit</button>
       </div>

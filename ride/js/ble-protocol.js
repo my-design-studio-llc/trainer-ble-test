@@ -5,6 +5,7 @@ export const UUID = {
   FTMS: 0x1826,
   INDOOR_BIKE_DATA: 0x2ad2,
   FTMS_CONTROL_POINT: 0x2ad9,
+  SUPPORTED_RESISTANCE_RANGE: 0x2ad6,
   CYCLING_POWER: 0x1818,
   CYCLING_POWER_MEASUREMENT: 0x2a63,
   HEART_RATE: 0x180d,
@@ -13,6 +14,7 @@ export const UUID = {
 
 export const FTMS_OP = {
   REQUEST_CONTROL: 0x00,
+  SET_RESISTANCE: 0x04,
   START_OR_RESUME: 0x07,
   SET_SIMULATION: 0x11,
   RESPONSE: 0x80,
@@ -94,6 +96,15 @@ export function encodeSimulation({ grade, windSpeed = 0, crr = 0.004, cw = 0.51 
   return new Uint8Array(buf.buffer);
 }
 
+/**
+ * FTMS "Set Target Resistance Level": `pct` 0-100 mapped onto the trainer's supported
+ * range (0.1 units). Older trainers take one byte, newer ones a 16-bit level.
+ */
+export function encodeResistance(pct, [lo, hi] = [0, 100]) {
+  const q = clampInt(lo + ((hi - lo) * pct) / 100, lo, hi);
+  return hi <= 255 ? Uint8Array.of(FTMS_OP.SET_RESISTANCE, q) : Uint8Array.of(FTMS_OP.SET_RESISTANCE, q & 0xff, (q >> 8) & 0xff);
+}
+
 function clampInt(v, lo, hi) {
   return Math.min(hi, Math.max(lo, Math.round(v)));
 }
@@ -132,6 +143,11 @@ export function parseFecMessage(dv) {
     default:
       return {};
   }
+}
+
+/** FE-C page 0x30 Basic Resistance: `pct` 0-100 % of the trainer's range, 0.5 % steps. */
+export function encodeFecBasicResistance(pct) {
+  return fecFrame([0x30, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, clampInt(pct * 2, 0, 200)]);
 }
 
 /** FE-C page 0x33 Track Resistance: grade in rise/run, rolling resistance coefficient. */

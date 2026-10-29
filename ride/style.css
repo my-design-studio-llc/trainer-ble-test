@@ -266,6 +266,57 @@ select {
   padding: 6px;
 }
 
+#resist {
+  position: absolute;
+  right: 16px;
+  top: calc(var(--hud-h, 60px) + 28px);
+  bottom: calc(var(--controls-h, 40px) + var(--minimap-h, 200px) + 44px);
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  background: var(--overlay);
+  border-radius: 10px;
+}
+
+#resist button {
+  width: 44px;
+  padding: 6px 0;
+  font-size: 1.1rem;
+}
+
+#resist #res-auto {
+  font-size: 0.75rem;
+}
+
+#resist #res-auto.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#res-val {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Vertical slider: low resistance at the bottom. */
+#res {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  flex: 1 1 auto;
+  min-height: 40px;
+  width: 32px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+#resist :disabled {
+  opacity: 0.4;
+}
+
 #controls button.connected {
   border-color: #2ecc71;
   color: #2ecc71;
@@ -330,5 +381,83 @@ select {
     bottom: calc(var(--controls-h, 40px) + 34px);
     height: 48px;
     width: calc(100% - 144px);
+  }
+  #resist {
+    right: 8px;
+    width: 52px;
+    top: calc(var(--hud-h, 60px) + 16px);
+    bottom: calc(var(--controls-h, 40px) + var(--minimap-h, 96px) + 42px);
+  }
+}
+
+/* Phone in landscape: one HUD row, one scrolling row of controls, bar on the right edge. */
+@media (orientation: landscape) and (max-height: 520px) {
+  #hud {
+    top: 6px;
+    left: 8px;
+    max-width: calc(100% - 80px);
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  #hud > div {
+    min-width: 0;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  #hud span {
+    font-size: 1.1rem;
+  }
+  #hud small {
+    font-size: 0.7rem;
+    margin-left: 2px;
+  }
+  #hud > div:last-child small {
+    display: none;
+  }
+  #attribution {
+    top: auto;
+    bottom: 2px;
+    left: 8px;
+    right: 80px;
+    max-width: none;
+    font-size: 9px;
+    text-align: left;
+  }
+  #controls {
+    left: 8px;
+    right: 80px;
+    bottom: 18px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+  }
+  #controls > * {
+    flex: 0 0 auto;
+  }
+  #controls button,
+  #controls select {
+    padding: 6px 10px;
+  }
+  #controls select {
+    max-width: 150px;
+  }
+  #profile {
+    left: 8px;
+    bottom: calc(var(--controls-h, 36px) + 24px);
+    height: 40px;
+    width: calc(100% - 224px);
+  }
+  #minimap {
+    right: 80px;
+    bottom: calc(var(--controls-h, 36px) + 24px);
+    width: 128px;
+    height: 80px;
+  }
+  #resist {
+    right: 8px;
+    width: 60px;
+    top: 6px;
+    bottom: 18px;
   }
 }

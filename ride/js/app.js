@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -166,6 +166,7 @@ async function startRide() {
     nextSampleAt: 0,
     lastGradeSent: null,
     lastGradeAt: -Infinity,
+    resistance: null, // fixed resistance % set from the bar; null follows the road grade
     lastFrame: performance.now(),
     raf: 0,
     view,
@@ -255,7 +256,7 @@ function recordSample(here, now) {
 
 /** Pushes the road grade to the trainer, scaled by the difficulty setting. */
 function sendGrade(grade, rider) {
-  if (settings.mode !== 'power' || !trainer.canSimulate) return;
+  if (settings.mode !== 'power' || !trainer.canSimulate || ride.resistance !== null) return;
   const g = Math.round(grade * (settings.difficulty / 100) * 1000) / 1000;
   if (g === ride.lastGradeSent && ride.elapsed - ride.lastGradeAt < 10) return;
   ride.lastGradeSent = g;
@@ -291,7 +292,14 @@ function showBanner(text) {
 
 function setupRideControls() {
   // The profile and minimap sit above the controls, which wrap onto more rows on narrow screens.
-  new ResizeObserver(() => $('ride').style.setProperty('--controls-h', `${$('controls').offsetHeight}px`)).observe($('controls'));
+  // The resistance bar fits between the HUD and the minimap.
+  const measure = () => {
+    $('ride').style.setProperty('--controls-h', `${$('controls').offsetHeight}px`);
+    $('ride').style.setProperty('--hud-h', `${$('hud').offsetHeight}px`);
+    $('ride').style.setProperty('--minimap-h', `${$('minimap').offsetHeight}px`);
+  };
+  const ro = new ResizeObserver(measure);
+  for (const id of ['controls', 'hud', 'minimap']) ro.observe($(id));
   $('mode').addEventListener('change', () => {
     settings.mode = $('mode').value;
     saveSettings();
@@ -308,7 +316,10 @@ function setupRideControls() {
     sensors.trainerAt = performance.now();
   });
   hrm.addEventListener('data', onSensor);
-  trainer.addEventListener('disconnected', () => markConnected('connect-trainer', false, 'Connect trainer'));
+  trainer.addEventListener('disconnected', () => {
+    markConnected('connect-trainer', false, 'Connect trainer');
+    updateResistBar();
+  });
   hrm.addEventListener('disconnected', () => markConnected('connect-hr', false, 'Connect heart rate'));
 
   if (!bluetoothAvailable()) {
@@ -320,6 +331,8 @@ function setupRideControls() {
   $('connect-trainer').addEventListener('click', () => connectDevice(trainer, 'connect-trainer'));
   $('connect-hr').addEventListener('click', () => connectDevice(hrm, 'connect-hr'));
 
+  setupResistBar();
+  $('landscape').addEventListener('click', toggleLandscape);
   $('pause').addEventListener('click', togglePause);
   document.addEventListener('keydown', (e) => {
     if (!ride || $('ride').hidden || e.target.tagName === 'INPUT') return;
@@ -334,6 +347,8 @@ function setupRideControls() {
     cancelAnimationFrame(ride.raf);
     ride.view.dispose?.();
     ride = null;
+    updateResistBar();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     $('ride').hidden = true;
     $('setup').hidden = false;
   });
@@ -344,6 +359,7 @@ async function connectDevice(device, buttonId) {
     const name = await device.connect();
     const detail = device === trainer ? ` · ${trainer.protocol}${trainer.canSimulate ? '' : ' (power only, no grade)'}` : '';
     markConnected(buttonId, true, name + detail);
+    updateResistBar();
   } catch (err) {
     if (err.name !== 'NotFoundError') alert(`Connection failed: ${err.message}`);
   }
@@ -353,6 +369,67 @@ function markConnected(id, on, label) {
   $(id).classList.toggle('connected', on);
   $(id).textContent = label;
 }
+
+// ---------- resistance bar ----------
+// Dragging the bar puts the trainer on a fixed resistance; Auto goes back to the road grade.
+// Speed is still worked out from power and the road grade either way.
+
+let resTimer = 0;
+
+function setupResistBar() {
+  const set = (pct) => {
+    $('res').value = Math.max(0, Math.min(100, pct));
+    applyResistance();
+  };
+  $('res').addEventListener('input', () => applyResistance());
+  $('res-up').addEventListener('click', () => set(Number($('res').value) + 1));
+  $('res-down').addEventListener('click', () => set(Number($('res').value) - 1));
+  $('res-auto').addEventListener('click', () => {
+    if (!ride) return;
+    ride.resistance = null;
+    ride.lastGradeSent = null; // the next sample re-sends the grade, which leaves fixed resistance
+    updateResistBar();
+  });
+  updateResistBar();
+}
+
+function applyResistance() {
+  if (!ride) return;
+  ride.resistance = Number($('res').value);
+  updateResistBar();
+  // Send the latest value once dragging pauses, so writes don't pile up.
+  clearTimeout(resTimer);
+  resTimer = setTimeout(() => ride?.resistance != null && trainer.setResistance(ride.resistance), 150);
+}
+
+function updateResistBar() {
+  const manual = ride?.resistance != null;
+  const enabled = trainer.canResist;
+  for (const id of ['res', 'res-up', 'res-down', 'res-auto']) $(id).disabled = !enabled;
+  $('resist').title = enabled ? 'Trainer resistance. Auto follows the road grade.' : 'Connect a trainer that supports resistance control';
+  $('res-val').textContent = manual ? `${ride.resistance}%` : 'Auto';
+  $('res-auto').classList.toggle('on', !manual);
+}
+
+// ---------- landscape ----------
+
+async function toggleLandscape() {
+  try {
+    if (document.fullscreenElement) {
+      screen.orientation?.unlock?.();
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      await screen.orientation?.lock?.('landscape').catch(() => {}); // not every browser allows the lock
+    }
+  } catch (err) {
+    showBanner(`Fullscreen not available: ${err.message}`);
+  }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  $('landscape').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Landscape';
+});
 
 function togglePause() {
   if (!ride || ride.finished) return;
