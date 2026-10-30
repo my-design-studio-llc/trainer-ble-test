@@ -9,7 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.4.1';
+const VERSION = '0.5.0';
 const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
 
 // three.js is only downloaded when a ride starts.
@@ -25,6 +25,7 @@ const settings = {
   difficulty: 50,
   mode: 'power',
   imagery: 'esri',
+  fov: 70,
   ...readSettings(),
 };
 
@@ -49,6 +50,8 @@ function saveSettings() {
 let route = null;
 let routePoints = null; // raw track points of `route`, kept so the ride can be reversed
 let ride = null;
+// Where the rider looks relative to the road ahead; read by the 3D view every frame.
+const look = { yaw: 0, pitch: 0, fov: settings.fov };
 const sensors = { power: undefined, cadence: undefined, speed: undefined, hr: undefined, trainerAt: 0, hrAt: 0 };
 const trainer = new Trainer();
 const hrm = new HeartRateMonitor();
@@ -149,7 +152,8 @@ async function startRide() {
     r = await prepareRoute3D(base, dem, showError);
     showError('');
     showRideScreen();
-    view = new Terrain3DView($('pano'), r, { dem, imagery, onStatus: showStatus });
+    look.yaw = look.pitch = 0;
+    view = new Terrain3DView($('pano'), r, { dem, imagery, look, onStatus: showStatus });
     await view.start(startD);
     minimap = new CanvasMiniMap($('minimap'), r);
     attribution = `${imagery.attribution} · ${DEM_ATTRIBUTION} · Road height, bridges and trees are inferred`;
@@ -365,6 +369,7 @@ function setupRideControls() {
 
   setupResistBar();
   setupProfileDrag();
+  setupLook();
   $('turn').addEventListener('click', turnAround);
   $('fullscreen').addEventListener('click', async () => {
     if (fullscreenElement()) return exitFullscreen();
@@ -461,7 +466,7 @@ async function turnAround() {
     const d = Math.min(Math.max(0, r.total * (1 - old.d / old.route.total)), r.total - 1);
     const { Terrain3DView } = await loadTerrainView();
     old.view.dispose();
-    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, onStatus: showStatus });
+    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, look, onStatus: showStatus });
     await view.start(d);
     if (ride !== old) return view.dispose(); // exited meanwhile
     Object.assign(ride, {
@@ -484,6 +489,71 @@ async function turnAround() {
     if (ride === old) ride.busy = false;
     $('turn').disabled = false;
   }
+}
+
+// ---------- looking around ----------
+// One finger (or mouse) drags the view left/right and up/down, two fingers pinch the field of view,
+// the mouse wheel zooms, and a double tap looks straight ahead again.
+
+const FOV_MIN = 30;
+const FOV_MAX = 100;
+const PITCH_MAX = Math.PI / 3;
+
+function setupLook() {
+  const pano = $('pano');
+  const pointers = new Map();
+  let start = null;
+  let lastTap = 0;
+  const setFov = (f) => {
+    look.fov = Math.min(Math.max(f, FOV_MIN), FOV_MAX);
+    settings.fov = Math.round(look.fov);
+  };
+  const begin = () => {
+    const [a, b] = [...pointers.values()];
+    start = { yaw: look.yaw, pitch: look.pitch, fov: look.fov, x: a.x, y: a.y, dist: b ? Math.hypot(a.x - b.x, a.y - b.y) : 0 };
+  };
+  pano.addEventListener('pointerdown', (e) => {
+    if (!ride) return;
+    e.preventDefault();
+    pano.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      if (e.timeStamp - lastTap < 300) {
+        look.yaw = look.pitch = 0;
+        flashBanner('Looking ahead', 1200);
+      }
+      lastTap = e.timeStamp;
+    }
+    begin();
+  });
+  pano.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const [a, b] = [...pointers.values()];
+    if (b) {
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (start.dist > 0) setFov(start.fov * (start.dist / dist));
+      return;
+    }
+    // Scenery follows the finger: a full screen width turns the view by about the horizontal field of view.
+    const perPx = ((look.fov * Math.PI) / 180) / pano.clientHeight;
+    look.yaw = start.yaw + (a.x - start.x) * perPx;
+    look.pitch = Math.min(Math.max(start.pitch + (a.y - start.y) * perPx, -PITCH_MAX), PITCH_MAX);
+  });
+  const end = (e) => {
+    if (!pointers.delete(e.pointerId)) return;
+    if (pointers.size) begin();
+    else saveSettings();
+  };
+  pano.addEventListener('pointerup', end);
+  pano.addEventListener('pointercancel', end);
+  pano.addEventListener('lostpointercapture', end);
+  pano.addEventListener('wheel', (e) => {
+    if (!ride) return;
+    e.preventDefault();
+    setFov(look.fov * Math.exp(e.deltaY * 0.001));
+    saveSettings();
+  }, { passive: false });
 }
 
 // ---------- resistance bar ----------

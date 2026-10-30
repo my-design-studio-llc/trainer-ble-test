@@ -165,6 +165,7 @@ select {
 #pano {
   position: absolute;
   inset: 0;
+  touch-action: none; /* drag to look around, pinch to zoom */
 }
 
 #banner {

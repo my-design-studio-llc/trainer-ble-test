@@ -22,10 +22,12 @@ const SHOULDER = 0.9;
 const TRAIL_LIFT = 0.12;
 const EYE_HEIGHT = 1.55;
 const HORIZON = 0xd4e1ec;
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class Terrain3DView {
-  constructor(container, route, { dem, imagery, onStatus = () => {} }) {
+  constructor(container, route, { dem, imagery, look = null, onStatus = () => {} }) {
     this.route = route;
+    this.look = look; // { yaw, pitch, fov }: offsets from the road direction, radians; fov in degrees
     this.dem = dem;
     this.imagery = imagery;
     this.onStatus = onStatus;
@@ -105,8 +107,17 @@ export class Terrain3DView {
     const want = new THREE.Vector3(a.x, ahead.ele + TRAIL_LIFT + EYE_HEIGHT - 0.25, a.z).sub(eye).normalize();
     if (!this.dir || dt === 0) this.dir = want;
     else this.dir.lerp(want, 1 - Math.exp(-dt * 4)).normalize();
+    const view = this.dir.clone();
+    if (this.look) {
+      view.applyAxisAngle(UP, this.look.yaw);
+      view.applyAxisAngle(new THREE.Vector3().crossVectors(view, UP).normalize(), this.look.pitch);
+      if (this.camera.fov !== this.look.fov) {
+        this.camera.fov = this.look.fov;
+        this.camera.updateProjectionMatrix();
+      }
+    }
     this.camera.position.copy(eye);
-    this.camera.lookAt(eye.clone().add(this.dir));
+    this.camera.lookAt(view.add(eye));
     this.sky.position.copy(eye);
 
     this.#syncTiles(here.lng, here.lat);
