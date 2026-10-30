@@ -9,8 +9,7 @@ import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from '.
 import { prepareRoute3D } from './terrain/route3d.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.5.0';
-const SAMPLE_GPX = '../samples/cross-kirkland-corridor.gpx';
+const VERSION = '0.6.0';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -69,13 +68,15 @@ function init() {
   for (const id of ['mass', 'difficulty', 'imagery']) $(id).addEventListener('change', readSettingsForm);
 
   $('file-input').addEventListener('change', onFile);
-  $('load-sample').addEventListener('click', loadSample);
+  const samples = [...document.querySelectorAll('button.sample')];
+  for (const b of samples) b.addEventListener('click', () => loadSample(b.dataset.src));
   $('export-csv').addEventListener('click', () => route && exportRouteCSV(route));
   $('export-json').addEventListener('click', () => route && exportRouteJSON(route));
   $('start').addEventListener('click', startRide);
 
   setupRideControls();
-  if (new URLSearchParams(location.search).has('sample')) loadSample();
+  const sample = new URLSearchParams(location.search).get('sample'); // ?sample or ?sample=2 for the second one
+  if (sample !== null) loadSample(samples[Math.max(0, Number(sample) - 1) || 0].dataset.src);
 }
 
 function readSettingsForm() {
@@ -100,9 +101,9 @@ async function onFile(e) {
   }
 }
 
-async function loadSample() {
+async function loadSample(src) {
   try {
-    const res = await fetch(SAMPLE_GPX);
+    const res = await fetch(src);
     if (!res.ok) throw new Error(`Could not load the sample route (${res.status})`);
     const { name, points } = parseTrackFile(await res.text(), 'sample.gpx');
     setRoute(buildRoute(points, { name }), points);

@@ -20,7 +20,7 @@ https://my-design-studio-llc.github.io/trainer-ble-test/ride/
 
 Ride a real route through a 3D scene built in the browser from satellite imagery and terrain tiles.
 
-- Routes: the bundled sample (Cross Kirkland Corridor, South Kirkland to Totem Lake, 9.4 km, flat) or any GPX / TCX file
+- Routes: two bundled samples (Cross Kirkland Corridor, South Kirkland to Totem Lake, 9.4 km, flat; Fremont to Issaquah on the Burke-Gilman, Sammamish River and East Lake Sammamish Trails, 59.7 km, mostly flat) or any GPX / TCX file
 - The road grade is sent to the trainer (FTMS simulation or FE-C track resistance), scaled by a difficulty setting
 - Speed modes: power based (power, grade, weight and drag), trainer speed, replay of recorded pace, manual
 - Vertical resistance bar: drag (or ±1 %) for a fixed trainer resistance, Auto to follow the road grade again
