@@ -7,10 +7,11 @@ import { exportRideTCX, exportRouteCSV, exportRouteJSON } from './export.js';
 import { CanvasMiniMap } from './minimap2d.js';
 import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from './terrain/sources.js';
 import { prepareRoute3D } from './terrain/route3d.js';
-import { OSM_ATTRIBUTION, fetchOsmFeatures } from './terrain/osm.js';
+import { OSM_ATTRIBUTION, fetchOsmFeatures, placeCrossings } from './terrain/osm.js';
+import { WEATHER_ATTRIBUTION } from './terrain/weather.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -25,6 +26,7 @@ const settings = {
   difficulty: 50,
   mode: 'power',
   imagery: 'esri',
+  sky: 'live',
   fov: 70,
   ...readSettings(),
 };
@@ -67,7 +69,8 @@ function init() {
   $('mode').value = settings.mode;
   for (const [id, p] of Object.entries(IMAGERY_PROVIDERS)) $('imagery').add(new Option(p.label, id));
   $('imagery').value = IMAGERY_PROVIDERS[settings.imagery] ? settings.imagery : 'esri';
-  for (const id of ['mass', 'difficulty', 'imagery']) $(id).addEventListener('change', readSettingsForm);
+  $('sky').value = settings.sky === 'fixed' ? 'fixed' : 'live';
+  for (const id of ['mass', 'difficulty', 'imagery', 'sky']) $(id).addEventListener('change', readSettingsForm);
 
   $('file-input').addEventListener('change', onFile);
   const samples = [...document.querySelectorAll('button.sample')];
@@ -88,6 +91,7 @@ function readSettingsForm() {
   settings.mass = Number($('mass').value) || DEFAULT_RIDER.mass;
   settings.difficulty = Math.min(100, Math.max(0, Number($('difficulty').value)));
   settings.imagery = $('imagery').value;
+  settings.sky = $('sky').value;
   saveSettings();
 }
 
@@ -157,14 +161,15 @@ async function startRide() {
   const features = fetchOsmFeatures(base, routeFeatures); // buildings and landmarks fill in when they arrive
   try {
     const { Terrain3DView } = await loadTerrainView();
-    r = await prepareRoute3D(base, dem, showError);
+    r = await prepareRoute3D(base, dem, showError, await osmSpans(base, features, routeFeatures ? 5000 : 0));
     showError('');
     showRideScreen();
     look.yaw = look.pitch = 0;
-    view = new Terrain3DView($('pano'), r, { dem, imagery, features, look, onStatus: showStatus });
+    view = makeView(Terrain3DView, r, { dem, imagery, features });
     await view.start(startD);
     minimap = new CanvasMiniMap($('minimap'), r);
-    attribution = `${imagery.attribution} · ${DEM_ATTRIBUTION} · ${OSM_ATTRIBUTION} · Road height, bridges and trees are inferred`;
+    const weather = settings.sky === 'fixed' ? '' : ` · ${WEATHER_ATTRIBUTION}`;
+    attribution = `${imagery.attribution} · ${DEM_ATTRIBUTION} · ${OSM_ATTRIBUTION}${weather} · Road height, bridges and trees are inferred`;
   } catch (err) {
     view?.dispose?.();
     $('ride').hidden = true;
@@ -210,6 +215,36 @@ async function startRide() {
   updateModeControls();
   if (new URLSearchParams(location.search).has('debug')) window.__ride = ride;
   ride.raf = requestAnimationFrame(frame);
+}
+
+const WEATHER_PRESETS = {
+  overcast: { cloud: 1, visibility: 15000, rain: 0, snow: 0, fog: false, windSpeed: 10, windDir: 200 },
+  rain: { cloud: 1, visibility: 6000, rain: 0.7, snow: 0, fog: false, windSpeed: 18, windDir: 200 },
+  snow: { cloud: 1, visibility: 2500, rain: 0, snow: 0.7, fog: false, windSpeed: 8, windDir: 340 },
+  fog: { cloud: 0.9, visibility: 400, rain: 0, snow: 0, fog: true, windSpeed: 2, windDir: 0 },
+};
+
+/**
+ * Bridges and tunnels the route runs along, from OpenStreetMap, if the features arrive within
+ * `wait` ms (bundled files do; a live Overpass query usually doesn't, and isn't waited for).
+ */
+async function osmSpans(route, features, wait) {
+  const f = await Promise.race([features, new Promise((r) => setTimeout(r, wait, null))]);
+  return f?.crossings ? placeCrossings(route, f.crossings).spans : [];
+}
+
+function makeView(Terrain3DView, r, sources) {
+  const view = new Terrain3DView($('pano'), r, { ...sources, look, sky: settings.sky, onStatus: showStatus });
+  // ?time=2026-12-21T16:30 (local) shows the live sky at another moment; the clock keeps running from there.
+  const at = Date.parse(new URLSearchParams(location.search).get('time') ?? '');
+  if (Number.isFinite(at)) {
+    const offset = at - Date.now();
+    view.now = () => new Date(Date.now() + offset);
+  }
+  // ?weather=rain|snow|fog|overcast pins the weather instead of asking Open-Meteo.
+  const pinned = WEATHER_PRESETS[new URLSearchParams(location.search).get('weather')];
+  if (pinned && view.weather) Object.assign(view.weather, { current: pinned, at: Infinity });
+  return view;
 }
 
 function showRideScreen() {
@@ -483,11 +518,12 @@ async function turnAround() {
   try {
     const points = reversePoints(old.points);
     const name = old.reversed ? route.name : `${route.name} (reverse)`;
-    const r = await prepareRoute3D(buildRoute(points, { name }), old.dem, showStatus); // terrain tiles are cached
+    const back = buildRoute(points, { name });
+    const r = await prepareRoute3D(back, old.dem, showStatus, await osmSpans(back, old.features, 0)); // terrain tiles are cached
     const d = Math.min(Math.max(0, r.total * (1 - old.d / old.route.total)), r.total - 1);
     const { Terrain3DView } = await loadTerrainView();
     old.view.dispose();
-    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, features: old.features, look, onStatus: showStatus });
+    const view = makeView(Terrain3DView, r, { dem: old.dem, imagery: old.imagery, features: old.features });
     await view.start(d);
     if (ride !== old) return view.dispose(); // exited meanwhile
     Object.assign(ride, {

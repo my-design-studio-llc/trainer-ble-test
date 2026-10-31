@@ -7,10 +7,11 @@
  */
 export function canopyScore(r, g, b) {
   const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-  if (luma < 12 || luma > 150) return 0;
+  if (luma < 12 || luma > 125) return 0;
   const exg = 2 * g - r - b;
   const greenness = Math.min(1, Math.max(0, (exg - 8) / 40));
-  const darkness = Math.min(1, Math.max(0, (150 - luma) / 70));
+  // Fields and lawns are green too, but brighter than canopy; demand fairly dark pixels.
+  const darkness = Math.min(1, Math.max(0, (125 - luma) / 60));
   return greenness * darkness;
 }
 
@@ -19,10 +20,11 @@ export function canopyScore(r, g, b) {
  * @param pixels RGBA bytes, `width` × `height`
  * @param spacing grid spacing in pixels (one candidate per cell)
  * @param rand    () => [0, 1)
+ * @param score   (x, y, r, g, b) => 0..1 chance of a tree at that pixel; defaults to canopyScore
  * @returns {{ u:number, v:number, r:number, g:number, b:number, conifer:boolean, size:number }[]}
  *   u, v in [0, 1] from the image's top-left; size in [0, 1)
  */
-export function scatterTrees(pixels, width, height, { spacing = 4, rand = Math.random, max = 4000 } = {}) {
+export function scatterTrees(pixels, width, height, { spacing = 4, rand = Math.random, max = 4000, score = null } = {}) {
   const trees = [];
   for (let y = 0; y < height; y += spacing) {
     for (let x = 0; x < width; x += spacing) {
@@ -32,8 +34,8 @@ export function scatterTrees(pixels, width, height, { spacing = 4, rand = Math.r
       const r = pixels[o];
       const g = pixels[o + 1];
       const b = pixels[o + 2];
-      const score = canopyScore(r, g, b);
-      if (score <= 0 || rand() > score) continue;
+      const p = score ? score(px, py, r, g, b) : canopyScore(r, g, b);
+      if (p <= 0 || rand() > p) continue;
       const luma = 0.299 * r + 0.587 * g + 0.114 * b;
       trees.push({
         u: (px + 0.5) / width,

@@ -19,6 +19,13 @@ export const IMAGERY_PROVIDERS = {
     url: (z, x, y) => `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/${z}/${y}/${x}.jpg`,
     attribution: 'Sentinel-2 cloudless by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2023)',
   },
+  naip: {
+    label: 'Hosted aerial photo + land cover (USDA NAIP; Kirkland demo area, Esri elsewhere)',
+    maxZoom: 17,
+    url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+    landcover: '../samples/landcover/',
+    attribution: 'Imagery: USDA NAIP 2023 (public domain); outside the demo area © Esri, Maxar, Earthstar Geographics',
+  },
 };
 
 async function loadPixels(url) {
@@ -134,6 +141,44 @@ export async function loadImageryMosaic(imagery, zoom, x, y, imageryZoom) {
   });
   return loaded ? { canvas, zoom: iz } : null;
 }
+
+/**
+ * Pre-baked land cover for terrain tiles: an aerial photo (JPEG) and a class map (8-bit PNG,
+ * one LANDCOVER class per pixel) per tile, both `size` px square, listed in index.json.
+ */
+export class LandCover {
+  constructor(base) {
+    this.base = base;
+    this.index = fetch(`${base}index.json`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j && { ...j, tiles: new Set(j.tiles) })
+      .catch(() => null);
+  }
+
+  /** { canvas, classes: Uint8Array, size } for terrain tile x, y at `zoom`, or null if not baked. */
+  async load(zoom, x, y) {
+    const index = await this.index;
+    if (!index || index.zoom !== zoom || !index.tiles.has(`${x}_${y}`)) return null;
+    const [photo, cover] = await Promise.all(
+      [`${x}_${y}.jpg`, `${x}_${y}.cover.png`].map((f) => fetch(this.base + f).then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`${r.status} ${f}`)))).then((b) => createImageBitmap(b))),
+    );
+    const size = photo.width;
+    const canvas = new OffscreenCanvas(size, size);
+    canvas.getContext('2d').drawImage(photo, 0, 0);
+    // Greyscale PNG: every channel holds the class, and it has no alpha to premultiply.
+    const c = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true });
+    c.drawImage(cover, 0, 0);
+    const rgba = c.getImageData(0, 0, size, size).data;
+    const classes = new Uint8Array(size * size);
+    for (let i = 0; i < classes.length; i++) classes[i] = rgba[i * 4];
+    photo.close();
+    cover.close();
+    return { canvas, classes, size };
+  }
+}
+
+/** Class ids in the land-cover maps (tools/bake-landcover.py). */
+export const LANDCOVER = { photo: 0, grass: 1, forestFloor: 2, dirt: 3, paved: 4, water: 5, building: 6 };
 
 export async function runLimited(items, limit, fn) {
   let next = 0;
