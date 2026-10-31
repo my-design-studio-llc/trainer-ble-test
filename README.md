@@ -26,6 +26,7 @@ Ride a real route through a 3D scene built in the browser from satellite imagery
 - Vertical resistance bar: drag (or ±1 %) for a fixed trainer resistance, Auto to follow the road grade again
 - Reverse: ride the route backwards, or Turn around mid-ride (U-turn button on the right-hand bar)
 - Drag or tap the elevation profile to jump to any point on the route
+- OpenStreetMap buildings beside the trail (extruded footprints), plus simple models and name signs for landmarks such as shelters and historic railcars; a banner names each landmark as you reach it. The sample routes bundle this data (`samples/*.osm.json`, made with `node tools/bake-osm.mjs <gpx> <out.json>`); uploaded routes query the Overpass API once per ride
 - Drag the 3D view to look left, right, up or down; pinch (or mouse wheel) to change the field of view; double tap to look ahead again
 - Full screen: on phones, Start ride goes full screen and locks landscape; the button at the top of the right-hand bar toggles it
 - Keeps the screen on during a ride (Screen Wake Lock)
@@ -33,7 +34,7 @@ Ride a real route through a 3D scene built in the browser from satellite imagery
 - Heart rate strap support, TCX export of the ride (power, cadence, heart rate)
 
 Data sources: imagery from Esri World Imagery or Sentinel-2 cloudless (EOX), elevation from AWS Terrain Tiles,
-sample route geometry from OpenStreetMap contributors (ODbL). three.js r185 (MIT) is vendored in `ride/vendor/three`.
+sample route geometry, buildings and landmarks from OpenStreetMap contributors (ODbL). three.js r185 (MIT) is vendored in `ride/vendor/three`.
 
 ## Tests
 

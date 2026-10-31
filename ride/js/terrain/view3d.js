@@ -4,12 +4,14 @@
 // Each is a height-field mesh draped with satellite imagery; a corridor along the
 // route is graded to the inferred trail elevation; trees are planted where the
 // imagery looks like canopy; bridges inferred from the elevation profile get a
-// deck, railings and trestle bents.
+// deck, railings and trestle bents. OpenStreetMap buildings beside the route are
+// extruded from their footprints, and named landmarks get a simple model and a sign.
 
 import * as THREE from 'three';
 import { sampleAt } from '../geo.js';
 import { LocalFrame, lngLatToTile, tileToLngLat, tileWidthMeters } from './tiles.js';
 import { loadImageryMosaic } from './sources.js';
+import { BUILDING_REACH, LANDMARK_REACH } from './osm.js';
 import { mulberry32, scatterTrees } from './vegetation.js';
 
 const ZOOM = 15;
@@ -25,7 +27,7 @@ const HORIZON = 0xd4e1ec;
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class Terrain3DView {
-  constructor(container, route, { dem, imagery, look = null, onStatus = () => {} }) {
+  constructor(container, route, { dem, imagery, features = null, look = null, onStatus = () => {} }) {
     this.route = route;
     this.look = look; // { yaw, pitch, fov }: offsets from the road direction, radians; fov in degrees
     this.dem = dem;
@@ -43,6 +45,8 @@ export class Terrain3DView {
     this.tiles = new Map();
     this.building = 0;
     this.dir = null;
+    this.features = null; // { buildings, landmarks } by tile, once OpenStreetMap answers
+    this.landmarks = []; // named landmarks beside the route, sorted by route distance
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -69,15 +73,22 @@ export class Terrain3DView {
       foliage: new THREE.MeshLambertMaterial({ color: 0xffffff }),
       bark: new THREE.MeshLambertMaterial({ color: 0x4a3a2c }),
       bare: new THREE.MeshLambertMaterial({ color: 0x7b8566 }),
+      building: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+      roof: new THREE.MeshLambertMaterial({ color: 0x4f5a4c }),
+      caboose: new THREE.MeshLambertMaterial({ color: 0xa8322b }),
+      iron: new THREE.MeshLambertMaterial({ color: 0x2b2b2b }),
     };
     this.geometries = {
       cone: new THREE.ConeGeometry(1, 1, 7).translate(0, 0.5, 0),
       crown: new THREE.IcosahedronGeometry(1, 1),
       trunk: new THREE.CylinderGeometry(0.12, 0.18, 1, 5).translate(0, 0.5, 0),
       box: new THREE.BoxGeometry(1, 1, 1),
+      hip: new THREE.ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).translate(0, 0.5, 0), // 1 × 1 base
     };
     this.#buildTrail();
     this.#buildBridges();
+
+    features?.then((f) => !this.disposed && this.#setFeatures(f));
 
     this.resize = new ResizeObserver(() => this.#resize());
     this.resize.observe(container);
@@ -204,7 +215,7 @@ export class Terrain3DView {
         obj.dispose(); // instance buffers only; the geometry is shared
         continue;
       }
-      obj.geometry.dispose();
+      if (!obj.userData.sharedGeometry) obj.geometry.dispose();
       if (obj.userData.ownsMaterial) {
         obj.material.map?.dispose();
         obj.material.dispose();
@@ -261,7 +272,7 @@ export class Terrain3DView {
     }
     const mesh = new THREE.Mesh(geo, material);
     mesh.userData.ownsMaterial = ownsMaterial;
-    const objects = [mesh, ...(img ? this.#plantTrees(tile, img.canvas, ground) : [])];
+    const objects = [mesh, ...(img ? this.#plantTrees(tile, img.canvas, ground) : []), ...this.#featureObjects(tile)];
     objects.forEach((o) => this.scene.add(o));
     this.#disposeObjects(tile.objects); // the coarse version, if this is a rebuild
     tile.objects = objects;
@@ -330,6 +341,156 @@ export class Terrain3DView {
       objects.push(crowns, trunks);
     }
     return objects;
+  }
+
+  // ---------- OpenStreetMap buildings and landmarks ----------
+
+  #setFeatures({ buildings, landmarks }) {
+    const byTile = new Map();
+    const bucket = (lat, lng) => {
+      const t = lngLatToTile(lng, lat, ZOOM);
+      const key = `${Math.floor(t.x)}/${Math.floor(t.y)}`;
+      if (!byTile.has(key)) byTile.set(key, { buildings: [], landmarks: [] });
+      return byTile.get(key);
+    };
+    for (const b of buildings) {
+      const pts = b.ring.slice(0, -1).map(([lat, lng]) => ({ lat, lng, ...this.frame.project(lat, lng) }));
+      // Keep what is near the trail, but nothing the trail runs through (overhangs, covered sections).
+      if (!pts.some((p) => this.index.nearest(p.x, p.z, BUILDING_REACH))) continue;
+      if (pts.some((p) => this.index.nearest(p.x, p.z, TRAIL_HALF_WIDTH + 1.5))) continue;
+      bucket(pts[0].lat, pts[0].lng).buildings.push({ pts, height: b.height });
+    }
+    for (const l of landmarks) {
+      const p = this.frame.project(l.lat, l.lng);
+      const near = this.index.nearest(p.x, p.z, LANDMARK_REACH + (l.ring ? 20 : 0));
+      if (!near) continue;
+      const lm = { ...l, x: p.x, z: p.z, d: (near.i + near.t) * this.route.step, along: near };
+      this.landmarks.push(lm);
+      bucket(l.lat, l.lng).landmarks.push(lm);
+    }
+    this.landmarks.sort((a, b) => a.d - b.d);
+    this.features = byTile;
+    // Tiles built before the answer came back get their buildings now.
+    for (const tile of this.tiles.values()) {
+      if (tile.state !== 'done' || !tile.objects) continue;
+      const extra = this.#featureObjects(tile);
+      extra.forEach((o) => this.scene.add(o));
+      tile.objects.push(...extra);
+    }
+  }
+
+  #ground(lng, lat, x, z) {
+    const h = this.dem.heightAt(lng, lat);
+    return this.#gradeToTrail(x, z, Number.isFinite(h) ? h : 0);
+  }
+
+  #featureObjects(tile) {
+    const f = this.features?.get(tile.key);
+    if (!f) return [];
+    const objects = [];
+    if (f.buildings.length) objects.push(this.#buildingMesh(f.buildings));
+    for (const lm of f.landmarks) objects.push(...this.#landmarkObjects(lm));
+    return objects;
+  }
+
+  /** All the tile's buildings as one mesh: walls in a muted facade colour, flat roofs. */
+  #buildingMesh(buildings) {
+    const pos = [];
+    const col = [];
+    const c = new THREE.Color();
+    for (const b of buildings) {
+      const hs = b.pts.map((p) => this.#ground(p.lng, p.lat, p.x, p.z));
+      const base = Math.min(...hs) - 0.5;
+      const top = Math.max(...hs) + b.height;
+      const rand = mulberry32(Math.round(b.pts[0].x * 31 + b.pts[0].z * 17));
+      const wall = FACADES[Math.floor(rand() * FACADES.length)];
+      const n = b.pts.length;
+      for (let i = 0; i < n; i++) {
+        const a = b.pts[i];
+        const e = b.pts[(i + 1) % n];
+        pos.push(a.x, base, a.z, e.x, base, e.z, e.x, top, e.z, a.x, base, a.z, e.x, top, e.z, a.x, top, a.z);
+        c.setHex(wall).multiplyScalar(0.92 + rand() * 0.12);
+        for (let k = 0; k < 6; k++) col.push(c.r, c.g, c.b);
+      }
+      const tris = THREE.ShapeUtils.triangulateShape(b.pts.map((p) => new THREE.Vector2(p.x, p.z)), []);
+      c.setHex(0x6b6d70);
+      for (const tri of tris) {
+        for (const k of tri) {
+          pos.push(b.pts[k].x, top, b.pts[k].z);
+          col.push(c.r, c.g, c.b);
+        }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals(); // flat shading: the geometry is not indexed
+    return new THREE.Mesh(geo, this.materials.building);
+  }
+
+  /** A simple model for the landmark (shelter or railcar) built from the shared pieces, plus its name sign. */
+  #landmarkObjects(lm) {
+    const objects = [];
+    const y = this.#ground(lm.lng, lm.lat, lm.x, lm.z);
+    const { w, l, yaw } = this.#footprint(lm);
+    const part = (geometry, material, dx, dy, dz, sx, sy, sz) => {
+      const m = new THREE.Mesh(geometry, material);
+      m.position.set(lm.x + dx * Math.cos(yaw) + dz * Math.sin(yaw), y + dy, lm.z - dx * Math.sin(yaw) + dz * Math.cos(yaw));
+      m.rotation.y = yaw;
+      m.scale.set(sx, sy, sz);
+      m.userData.sharedGeometry = true;
+      objects.push(m);
+    };
+    const { box, hip } = this.geometries;
+    let height = 2.5;
+    if (lm.kind === 'shelter') {
+      // Timber pavilion: posts every ~4 m along each long side under a hipped roof.
+      const posts = Math.max(2, Math.round(l / 4) + 1);
+      for (let k = 0; k < posts; k++) {
+        const dz = -l / 2 + 0.3 + ((l - 0.6) * k) / (posts - 1);
+        for (const dx of [-w / 2 + 0.3, w / 2 - 0.3]) part(box, this.materials.timber, dx, 1.5, dz, 0.3, 3, 0.3);
+      }
+      part(box, this.materials.timber, 0, 3.05, 0, w + 0.4, 0.2, l + 0.4);
+      part(hip, this.materials.roof, 0, 3.15, 0, w + 1, Math.min(w, l) * 0.45, l + 1);
+      height = 3.2 + Math.min(w, l) * 0.45;
+    } else if (lm.kind === 'railcar') {
+      // Caboose: red body with a cupola, sitting on dark trucks.
+      part(box, this.materials.iron, 0, 0.5, -3, 2.2, 1, 2);
+      part(box, this.materials.iron, 0, 0.5, 3, 2.2, 1, 2);
+      part(box, this.materials.caboose, 0, 2.4, 0, 3, 2.8, 10);
+      part(box, this.materials.caboose, 0, 4.3, 0, 2.4, 1, 3);
+      part(box, this.materials.iron, 0, 4.85, 0, 2.7, 0.12, 3.4);
+      height = 5;
+    } else {
+      part(box, this.materials.timber, 0, 1.25, 0, 0.15, 2.5, 0.15);
+    }
+    objects.push(makeLabel(lm.name, lm.x, y + height + 1.6, lm.z));
+    return objects;
+  }
+
+  /** Width, length and heading of a landmark: its OSM outline if it has one, else along the trail. */
+  #footprint(lm) {
+    const kindSize = { shelter: [5, 8], railcar: [3, 10], sign: [1, 1] }[lm.kind];
+    if (lm.ring && lm.kind !== 'railcar') {
+      const pts = lm.ring.slice(0, -1).map(([lat, lng]) => this.frame.project(lat, lng));
+      let best = null;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        if (!best || len > best.len) best = { len, yaw: Math.atan2(b.x - a.x, b.z - a.z) };
+      }
+      // Extent across the long axis.
+      const ax = Math.sin(best.yaw);
+      const az = Math.cos(best.yaw);
+      const along = pts.map((p) => (p.x - lm.x) * ax + (p.z - lm.z) * az);
+      const across = pts.map((p) => -(p.x - lm.x) * az + (p.z - lm.z) * ax);
+      const l = Math.max(...along) - Math.min(...along);
+      const w = Math.max(...across) - Math.min(...across);
+      if (l > 2 && w > 2 && l < 60) return { w, l, yaw: best.yaw };
+    }
+    const i = lm.along.i;
+    return { w: kindSize[0], l: kindSize[1], yaw: Math.atan2(this.rx[i + 1] - this.rx[i], this.rz[i + 1] - this.rz[i]) };
   }
 
   // ---------- trail and bridges ----------
@@ -526,6 +687,36 @@ class RouteIndex {
     }
     return best;
   }
+}
+
+// Muted facade colours: white and grey siding, beige stucco, brick, dark brown.
+const FACADES = [0xe4e1da, 0xc9c7c2, 0xd8c8a8, 0xa86c56, 0x8a7a68, 0xb9c2c8];
+
+/** A name sign that always faces the camera; its canvas texture is the only per-landmark asset. */
+function makeLabel(text, x, y, z) {
+  const font = 'bold 44px system-ui, sans-serif';
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = font;
+  const w = Math.min(1024, Math.ceil(ctx.measureText(text).width) + 48);
+  canvas.width = w;
+  canvas.height = 72;
+  ctx.font = font;
+  ctx.fillStyle = 'rgba(17, 19, 22, 0.82)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, w, 72, 16);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 24, 38, w - 48);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  sprite.scale.set((w / 72) * 1.6, 1.6, 1);
+  sprite.position.set(x, y, z);
+  sprite.userData.sharedGeometry = true;
+  sprite.userData.ownsMaterial = true;
+  return sprite;
 }
 
 function makeSky() {

@@ -7,9 +7,10 @@ import { exportRideTCX, exportRouteCSV, exportRouteJSON } from './export.js';
 import { CanvasMiniMap } from './minimap2d.js';
 import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from './terrain/sources.js';
 import { prepareRoute3D } from './terrain/route3d.js';
+import { OSM_ATTRIBUTION, fetchOsmFeatures } from './terrain/osm.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -48,6 +49,7 @@ function saveSettings() {
 
 let route = null;
 let routePoints = null; // raw track points of `route`, kept so the ride can be reversed
+let routeFeatures = null; // bundled OSM buildings/landmarks file for a sample route
 let ride = null;
 // Where the rider looks relative to the road ahead; read by the 3D view every frame.
 const look = { yaw: 0, pitch: 0, fov: settings.fov };
@@ -69,14 +71,17 @@ function init() {
 
   $('file-input').addEventListener('change', onFile);
   const samples = [...document.querySelectorAll('button.sample')];
-  for (const b of samples) b.addEventListener('click', () => loadSample(b.dataset.src));
+  for (const b of samples) b.addEventListener('click', () => loadSample(b.dataset.src, b.dataset.features));
   $('export-csv').addEventListener('click', () => route && exportRouteCSV(route));
   $('export-json').addEventListener('click', () => route && exportRouteJSON(route));
   $('start').addEventListener('click', startRide);
 
   setupRideControls();
   const sample = new URLSearchParams(location.search).get('sample'); // ?sample or ?sample=2 for the second one
-  if (sample !== null) loadSample(samples[Math.max(0, Number(sample) - 1) || 0].dataset.src);
+  if (sample !== null) {
+    const b = samples[Math.max(0, Number(sample) - 1) || 0];
+    loadSample(b.dataset.src, b.dataset.features);
+  }
 }
 
 function readSettingsForm() {
@@ -101,20 +106,21 @@ async function onFile(e) {
   }
 }
 
-async function loadSample(src) {
+async function loadSample(src, features) {
   try {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`Could not load the sample route (${res.status})`);
     const { name, points } = parseTrackFile(await res.text(), 'sample.gpx');
-    setRoute(buildRoute(points, { name }), points);
+    setRoute(buildRoute(points, { name }), points, features);
   } catch (err) {
     showError(err.message);
   }
 }
 
-function setRoute(r, points) {
+function setRoute(r, points, features = null) {
   route = r;
   routePoints = points;
+  routeFeatures = features;
   $('reverse').checked = false;
   showError('');
   $('route-card').hidden = false;
@@ -148,16 +154,17 @@ async function startRide() {
   let attribution = '';
   const imagery = createImagery(settings.imagery);
   const dem = new DemSampler();
+  const features = fetchOsmFeatures(base, routeFeatures); // buildings and landmarks fill in when they arrive
   try {
     const { Terrain3DView } = await loadTerrainView();
     r = await prepareRoute3D(base, dem, showError);
     showError('');
     showRideScreen();
     look.yaw = look.pitch = 0;
-    view = new Terrain3DView($('pano'), r, { dem, imagery, look, onStatus: showStatus });
+    view = new Terrain3DView($('pano'), r, { dem, imagery, features, look, onStatus: showStatus });
     await view.start(startD);
     minimap = new CanvasMiniMap($('minimap'), r);
-    attribution = `${imagery.attribution} · ${DEM_ATTRIBUTION} · Road height, bridges and trees are inferred`;
+    attribution = `${imagery.attribution} · ${DEM_ATTRIBUTION} · ${OSM_ATTRIBUTION} · Road height, bridges and trees are inferred`;
   } catch (err) {
     view?.dispose?.();
     $('ride').hidden = true;
@@ -177,6 +184,8 @@ async function startRide() {
     reversed,
     dem,
     imagery,
+    features,
+    lastLandmark: null, // id of the landmark announced most recently
     busy: false, // true while turning around
     odometer: 0, // distance actually ridden, for the recording (jumps on the profile don't count)
     d: startD,
@@ -263,10 +272,19 @@ function frame(now) {
   }
 
   ride.view.update(ride.d, dt);
+  announceLandmark();
   ride.minimap.update(here.lat, here.lng);
   ride.profile.draw(ride.d, { dragging: ride.dragging });
   renderHud(here, trainerFresh, now);
   ride.raf = requestAnimationFrame(frame);
+}
+
+/** Names the landmark coming up, once, as the rider gets within 60 m of it. */
+function announceLandmark() {
+  const lm = ride.view.landmarks?.find((l) => l.d > ride.d - 10 && l.d < ride.d + 60);
+  if (!lm || lm.id === ride.lastLandmark) return;
+  ride.lastLandmark = lm.id;
+  flashBanner(`📍 ${lm.name}`, 5000);
 }
 
 function recordSample(here, now) {
@@ -304,12 +322,14 @@ function renderHud(here, trainerFresh, now) {
   $('hud-time').textContent = formatTime(ride.elapsed);
 }
 
+/** Loading progress; never covers a message that is showing (a landmark, an error). */
 function showStatus(text) {
-  if (text) {
+  const b = $('banner');
+  if (text && (b.hidden || b.dataset.kind === 'status')) {
     showBanner(text);
     $('banner').dataset.kind = 'status';
-  } else if ($('banner').dataset.kind === 'status') {
-    $('banner').hidden = true;
+  } else if (!text && b.dataset.kind === 'status') {
+    b.hidden = true;
   }
 }
 
@@ -467,7 +487,7 @@ async function turnAround() {
     const d = Math.min(Math.max(0, r.total * (1 - old.d / old.route.total)), r.total - 1);
     const { Terrain3DView } = await loadTerrainView();
     old.view.dispose();
-    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, look, onStatus: showStatus });
+    const view = new Terrain3DView($('pano'), r, { dem: old.dem, imagery: old.imagery, features: old.features, look, onStatus: showStatus });
     await view.start(d);
     if (ride !== old) return view.dispose(); // exited meanwhile
     Object.assign(ride, {
