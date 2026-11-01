@@ -2,7 +2,26 @@
 
 import { routeRows, routeToCSV } from './geo.js';
 
-export function download(filename, text, type = 'text/plain') {
+const isIOS = () =>
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+export async function download(filename, text, type = 'text/plain') {
+  // iOS browsers built on WKWebView (Bluefy) ignore <a download>: hand the file to the share
+  // sheet ("Save to Files", AirDrop, mail…) or, failing that, open it in a tab to save from there.
+  if (isIOS()) {
+    const file = new File([text], filename, { type: 'text/plain' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return; // the rider closed the share sheet
+      }
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    if (window.open(url, '_blank')) return setTimeout(() => URL.revokeObjectURL(url), 60000);
+    URL.revokeObjectURL(url);
+  }
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.appendChild(a);

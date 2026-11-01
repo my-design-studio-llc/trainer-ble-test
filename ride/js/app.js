@@ -11,7 +11,7 @@ import { OSM_ATTRIBUTION, fetchOsmFeatures, placeCrossings } from './terrain/osm
 import { WEATHER_ATTRIBUTION } from './terrain/weather.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.8.3';
+const VERSION = '0.8.4';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -440,7 +440,11 @@ function setupRideControls() {
       togglePause();
     }
   });
-  $('export-tcx').addEventListener('click', () => ride && exportRideTCX(route.name, ride.samples));
+  $('export-tcx').addEventListener('click', () => {
+    if (!ride) return;
+    if (!ride.samples.length) return flashBanner('Nothing recorded yet', 3000);
+    exportRideTCX(route.name, ride.samples);
+  });
   $('exit').addEventListener('click', () => {
     if (ride?.samples.length > 60 && !confirm('Exit the ride? Anything not exported will be lost.')) return;
     cancelAnimationFrame(ride.raf);
