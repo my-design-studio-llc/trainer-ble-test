@@ -23,6 +23,10 @@ import {
 
 export const bluetoothAvailable = () => typeof navigator !== 'undefined' && 'bluetooth' in navigator;
 
+// Some Web Bluetooth implementations (e.g. Bluefy on iOS) only have the older writeValue().
+const writeWith = (ch, bytes) => (ch.writeValueWithResponse ? ch.writeValueWithResponse(bytes) : ch.writeValue(bytes));
+const writeWithout = (ch, bytes) => (ch.writeValueWithoutResponse ? ch.writeValueWithoutResponse(bytes) : ch.writeValue(bytes));
+
 export class Trainer extends EventTarget {
   device = null;
   protocol = null; // 'FTMS' | 'FE-C' | 'Power'
@@ -103,8 +107,8 @@ export class Trainer extends EventTarget {
     try {
       const cp = await ftms.getCharacteristic(UUID.FTMS_CONTROL_POINT);
       await cp.startNotifications(); // responses arrive as indications
-      await cp.writeValueWithResponse(Uint8Array.of(FTMS_OP.REQUEST_CONTROL));
-      await cp.writeValueWithResponse(Uint8Array.of(FTMS_OP.START_OR_RESUME));
+      await writeWith(cp, Uint8Array.of(FTMS_OP.REQUEST_CONTROL));
+      await writeWith(cp, Uint8Array.of(FTMS_OP.START_OR_RESUME));
       let range = [0, 100];
       try {
         const r = await (await ftms.getCharacteristic(UUID.SUPPORTED_RESISTANCE_RANGE)).readValue();
@@ -112,8 +116,8 @@ export class Trainer extends EventTarget {
       } catch {
         /* range not published: assume 0-100 */
       }
-      this.#resist = (pct) => cp.writeValueWithResponse(encodeResistance(pct, range));
-      return (params) => cp.writeValueWithResponse(encodeSimulation(params));
+      this.#resist = (pct) => writeWith(cp, encodeResistance(pct, range));
+      return (params) => writeWith(cp, encodeSimulation(params));
     } catch (err) {
       console.warn('FTMS control unavailable', err);
       return null;
@@ -133,7 +137,7 @@ export class Trainer extends EventTarget {
       }
       const tx = await fec.getCharacteristic(FEC_BLE.TX);
       const write = (bytes) =>
-        tx.properties.writeWithoutResponse ? tx.writeValueWithoutResponse(bytes) : tx.writeValueWithResponse(bytes);
+        tx.properties.writeWithoutResponse ? writeWithout(tx, bytes) : writeWith(tx, bytes);
       this.#resist = (pct) => write(encodeFecBasicResistance(pct));
       return async ({ grade, crr, cw }) => {
         if (!this.#fecWindSent) {

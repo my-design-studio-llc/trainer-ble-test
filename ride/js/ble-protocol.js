@@ -1,15 +1,19 @@
 // Bluetooth GATT payload encoding/decoding for smart trainers and HR straps.
 // Pure functions, so they can be unit tested without a browser.
 
+// Full 128-bit strings rather than 16-bit numbers: some Web Bluetooth implementations
+// (Bluefy on iOS) reject numeric UUIDs ("Request payload could not be parsed").
+const sig = (n) => `0000${n.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`;
+
 export const UUID = {
-  FTMS: 0x1826,
-  INDOOR_BIKE_DATA: 0x2ad2,
-  FTMS_CONTROL_POINT: 0x2ad9,
-  SUPPORTED_RESISTANCE_RANGE: 0x2ad6,
-  CYCLING_POWER: 0x1818,
-  CYCLING_POWER_MEASUREMENT: 0x2a63,
-  HEART_RATE: 0x180d,
-  HEART_RATE_MEASUREMENT: 0x2a37,
+  FTMS: sig(0x1826),
+  INDOOR_BIKE_DATA: sig(0x2ad2),
+  FTMS_CONTROL_POINT: sig(0x2ad9),
+  SUPPORTED_RESISTANCE_RANGE: sig(0x2ad6),
+  CYCLING_POWER: sig(0x1818),
+  CYCLING_POWER_MEASUREMENT: sig(0x2a63),
+  HEART_RATE: sig(0x180d),
+  HEART_RATE_MEASUREMENT: sig(0x2a37),
 };
 
 export const FTMS_OP = {

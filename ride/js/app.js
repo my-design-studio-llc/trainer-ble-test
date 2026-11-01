@@ -11,7 +11,7 @@ import { OSM_ATTRIBUTION, fetchOsmFeatures, placeCrossings } from './terrain/osm
 import { WEATHER_ATTRIBUTION } from './terrain/weather.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');

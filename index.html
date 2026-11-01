@@ -86,8 +86,10 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.8.0'; // bump on every change so the page shows when it has updated
-const FTMS=0x1826, CPS=0x1818;
+const VERSION='0.8.1'; // bump on every change so the page shows when it has updated
+// Full UUID strings: Bluefy on iOS can't parse numeric ones.
+const sig=n=>'0000'+n.toString(16).padStart(4,'0')+'-0000-1000-8000-00805f9b34fb';
+const FTMS=sig(0x1826), CPS=sig(0x1818);
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
 const $=id=>document.getElementById(id);
@@ -110,7 +112,7 @@ $('connect').onclick=async()=>{
     setStatus('Searching…');
     device=await navigator.bluetooth.requestDevice({
       filters:[{services:[FTMS]},{services:[CPS]},{services:[FEC]}],
-      optionalServices:[FTMS,CPS,FEC,'device_information','battery_service']
+      optionalServices:[FTMS,CPS,FEC,sig(0x180a),sig(0x180f)]
     });
     log('Selected device: '+(device.name||device.id));
     device.addEventListener('gattserverdisconnected',()=>{setStatus('Disconnected','bad');log('Device disconnected');ui(false);});
@@ -118,7 +120,7 @@ $('connect').onclick=async()=>{
     setStatus('Connected: '+(device.name||'device'),'ok'); ui(true);
     const svcs=await server.getPrimaryServices();
     log('Services: '+svcs.map(s=>s.uuid.slice(4,8)).join(', '));
-    const has=u=>svcs.some(s=>s.uuid===BluetoothUUID.getService(u));
+    const has=u=>svcs.some(s=>s.uuid===u);
     // Protocol order: FTMS, then FE-C over BLE, then Cycling Power (read-only)
     if(has(FTMS)&&await useFtms(server))return;
     if(has(FEC)&&await useFec(server)){
@@ -147,14 +149,14 @@ function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].m
 async function useFtms(server){
   try{
     const f=await server.getPrimaryService(FTMS);
-    const bike=await f.getCharacteristic(0x2AD2);
+    const bike=await f.getCharacteristic(sig(0x2AD2));
     bike.addEventListener('characteristicvaluechanged',e=>parseBike(e.target.value));
     await bike.startNotifications(); log('Subscribed to FTMS Indoor Bike Data');
     try{
-      const cp=await f.getCharacteristic(0x2AD9);
+      const cp=await f.getCharacteristic(sig(0x2AD9));
       cp.addEventListener('characteristicvaluechanged',e=>log('Control point response: '+hex(e.target.value)));
       await cp.startNotifications();
-      const write=async b=>{await cp.writeValueWithResponse(new Uint8Array(b));log('Wrote: '+hex(new DataView(new Uint8Array(b).buffer)));};
+      const write=async b=>{await (cp.writeValueWithResponse?cp.writeValueWithResponse(new Uint8Array(b)):cp.writeValue(new Uint8Array(b)));log('Wrote: '+hex(new DataView(new Uint8Array(b).buffer)));};
       setCtl({name:'FTMS',
         async setPower(w){await write([0x00]);await write([0x07]);await write([0x05,w&255,(w>>8)&255]);}, // Request Control, Start, Set Target Power
         async setResistance(pct){ // map % onto the trainer's supported resistance range (0.1 units)
@@ -162,7 +164,7 @@ async function useFtms(server){
           await write([0x00]);await write([0x07]);
           await write(hi<=255?[0x04,q]:[0x04,q&255,(q>>8)&255]);},
         async stop(){await write([0x08,0x01]);await write([0x01]);}}); // Stop, Reset
-      try{const r=await (await f.getCharacteristic(0x2AD6)).readValue();resRange=[r.getInt16(0,true),r.getInt16(2,true)];log('FTMS resistance range: '+resRange.join('..')+' (0.1 units)');}
+      try{const r=await (await f.getCharacteristic(sig(0x2AD6))).readValue();resRange=[r.getInt16(0,true),r.getInt16(2,true)];log('FTMS resistance range: '+resRange.join('..')+' (0.1 units)');}
       catch(e){log('No resistance range, assuming 0..100: '+e.message);}
       log('FTMS control point ready');
     }catch(e){log('Control point unavailable: '+e.message);}
@@ -211,7 +213,8 @@ async function useFec(server){
     rx.addEventListener('characteristicvaluechanged',e=>parseFec(e.target.value));
     await rx.startNotifications(); log('Subscribed to FE-C over BLE');
     const write=async m=>{
-      if(tx.properties.write)await tx.writeValueWithResponse(m);else await tx.writeValueWithoutResponse(m);
+      // Bluefy only has the older writeValue()
+      if(!tx.writeValueWithResponse)await tx.writeValue(m);else if(tx.properties.write)await tx.writeValueWithResponse(m);else await tx.writeValueWithoutResponse(m);
       log('Wrote: '+hex(new DataView(m.buffer)));
     };
     setCtl({name:'FE-C',
@@ -252,7 +255,7 @@ function parseCps(v){
 
 async function useCps(server){
   try{
-    const c=await (await server.getPrimaryService(CPS)).getCharacteristic(0x2A63);
+    const c=await (await server.getPrimaryService(CPS)).getCharacteristic(sig(0x2A63));
     lastCrank=lastWheel=null;
     c.addEventListener('characteristicvaluechanged',e=>parseCps(e.target.value));
     await c.startNotifications(); log('Subscribed to Cycling Power (no resistance control)');

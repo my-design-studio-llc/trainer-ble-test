@@ -28,11 +28,20 @@ export const IMAGERY_PROVIDERS = {
   },
 };
 
+// OffscreenCanvas arrived in iOS 16.4; a detached <canvas> does the same job before that.
+const makeCanvas = (w, h) => {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+};
+
 async function loadPixels(url) {
   const res = await fetch(url, { mode: 'cors' });
   if (!res.ok) throw new Error(`${res.status} ${url}`);
   const bitmap = await createImageBitmap(await res.blob());
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const canvas = makeCanvas(bitmap.width, bitmap.height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close();
@@ -120,7 +129,7 @@ export function createImagery(providerId) {
 export async function loadImageryMosaic(imagery, zoom, x, y, imageryZoom) {
   const iz = Math.max(zoom, Math.min(imageryZoom, imagery.maxZoom));
   const k = 2 ** (iz - zoom);
-  const canvas = new OffscreenCanvas(TILE_SIZE * k, TILE_SIZE * k);
+  const canvas = makeCanvas(TILE_SIZE * k, TILE_SIZE * k);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#6d7560';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -163,10 +172,10 @@ export class LandCover {
       [`${x}_${y}.jpg`, `${x}_${y}.cover.png`].map((f) => fetch(this.base + f).then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`${r.status} ${f}`)))).then((b) => createImageBitmap(b))),
     );
     const size = photo.width;
-    const canvas = new OffscreenCanvas(size, size);
+    const canvas = makeCanvas(size, size);
     canvas.getContext('2d').drawImage(photo, 0, 0);
     // Greyscale PNG: every channel holds the class, and it has no alpha to premultiply.
-    const c = new OffscreenCanvas(size, size).getContext('2d', { willReadFrequently: true });
+    const c = makeCanvas(size, size).getContext('2d', { willReadFrequently: true });
     c.drawImage(cover, 0, 0);
     const rgba = c.getImageData(0, 0, size, size).data;
     const classes = new Uint8Array(size * size);
