@@ -87,10 +87,17 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.8.2'; // bump on every change so the page shows when it has updated
+const VERSION='0.8.3'; // bump on every change so the page shows when it has updated
 // Full UUID strings: Bluefy on iOS can't parse numeric ones.
 const sig=n=>'0000'+n.toString(16).padStart(4,'0')+'-0000-1000-8000-00805f9b34fb';
 const FTMS=sig(0x1826), CPS=sig(0x1818);
+// Bluefy reports UUIDs upper-case and shortens SIG ones ("1818"), so compare normalized forms,
+// and look services/characteristics up by listing them.
+const norm=u=>{u=String(u).toLowerCase();return /^([0-9a-f]{4}|[0-9a-f]{8})$/.test(u)?u.padStart(8,'0')+'-0000-1000-8000-00805f9b34fb':u;};
+const svcOf=async(server,u)=>{const s=(await server.getPrimaryServices()).find(s=>norm(s.uuid)===u);if(!s)throw new Error('service '+u+' not found');return s;};
+const chrOf=async(svc,u)=>{const c=(await svc.getCharacteristics()).find(c=>norm(c.uuid)===u);if(!c)throw new Error('characteristic '+u+' not found');return c;};
+// Bluefy (iOS) can't match service filters, so iOS always lists every device.
+const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const FEC='6e40fec1-b5a3-f393-e0a9-e50e24dcca9e', FEC_RX='6e40fec2-b5a3-f393-e0a9-e50e24dcca9e', FEC_TX='6e40fec3-b5a3-f393-e0a9-e50e24dcca9e';
 const WHEEL_M=2.105; // 700x25c circumference, for Cycling Power wheel speed
 const $=id=>document.getElementById(id);
@@ -114,7 +121,7 @@ const connect=async all=>{
   try{
     setStatus('Searching…');
     const optionalServices=[FTMS,CPS,FEC,sig(0x180a),sig(0x180f)];
-    device=await navigator.bluetooth.requestDevice(all?{acceptAllDevices:true,optionalServices}:{
+    device=await navigator.bluetooth.requestDevice(all||isIOS?{acceptAllDevices:true,optionalServices}:{
       filters:[{services:[FTMS]},{services:[CPS]},{services:[FEC]}],
       optionalServices
     });
@@ -123,8 +130,8 @@ const connect=async all=>{
     const server=await device.gatt.connect();
     setStatus('Connected: '+(device.name||'device'),'ok'); ui(true);
     const svcs=await server.getPrimaryServices();
-    log('Services: '+svcs.map(s=>s.uuid.slice(4,8)).join(', '));
-    const has=u=>svcs.some(s=>s.uuid===u);
+    log('Services: '+svcs.map(s=>norm(s.uuid).slice(4,8)).join(', '));
+    const has=u=>svcs.some(s=>norm(s.uuid)===u);
     // Protocol order: FTMS, then FE-C over BLE, then Cycling Power (read-only)
     if(has(FTMS)&&await useFtms(server))return;
     if(has(FEC)&&await useFec(server)){
@@ -154,12 +161,12 @@ function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].m
 // ---- FTMS ----
 async function useFtms(server){
   try{
-    const f=await server.getPrimaryService(FTMS);
-    const bike=await f.getCharacteristic(sig(0x2AD2));
+    const f=await svcOf(server,FTMS);
+    const bike=await chrOf(f,sig(0x2AD2));
     bike.addEventListener('characteristicvaluechanged',e=>parseBike(e.target.value));
     await bike.startNotifications(); log('Subscribed to FTMS Indoor Bike Data');
     try{
-      const cp=await f.getCharacteristic(sig(0x2AD9));
+      const cp=await chrOf(f,sig(0x2AD9));
       cp.addEventListener('characteristicvaluechanged',e=>log('Control point response: '+hex(e.target.value)));
       await cp.startNotifications();
       const write=async b=>{await (cp.writeValueWithResponse?cp.writeValueWithResponse(new Uint8Array(b)):cp.writeValue(new Uint8Array(b)));log('Wrote: '+hex(new DataView(new Uint8Array(b).buffer)));};
@@ -170,7 +177,7 @@ async function useFtms(server){
           await write([0x00]);await write([0x07]);
           await write(hi<=255?[0x04,q]:[0x04,q&255,(q>>8)&255]);},
         async stop(){await write([0x08,0x01]);await write([0x01]);}}); // Stop, Reset
-      try{const r=await (await f.getCharacteristic(sig(0x2AD6))).readValue();resRange=[r.getInt16(0,true),r.getInt16(2,true)];log('FTMS resistance range: '+resRange.join('..')+' (0.1 units)');}
+      try{const r=await (await chrOf(f,sig(0x2AD6))).readValue();resRange=[r.getInt16(0,true),r.getInt16(2,true)];log('FTMS resistance range: '+resRange.join('..')+' (0.1 units)');}
       catch(e){log('No resistance range, assuming 0..100: '+e.message);}
       log('FTMS control point ready');
     }catch(e){log('Control point unavailable: '+e.message);}
@@ -214,8 +221,8 @@ function parseFec(v){
 
 async function useFec(server){
   try{
-    const s=await server.getPrimaryService(FEC);
-    const rx=await s.getCharacteristic(FEC_RX), tx=await s.getCharacteristic(FEC_TX);
+    const s=await svcOf(server,FEC);
+    const rx=await chrOf(s,FEC_RX), tx=await chrOf(s,FEC_TX);
     rx.addEventListener('characteristicvaluechanged',e=>parseFec(e.target.value));
     await rx.startNotifications(); log('Subscribed to FE-C over BLE');
     const write=async m=>{
@@ -261,7 +268,7 @@ function parseCps(v){
 
 async function useCps(server){
   try{
-    const c=await (await server.getPrimaryService(CPS)).getCharacteristic(sig(0x2A63));
+    const c=await chrOf(await svcOf(server,CPS),sig(0x2A63));
     lastCrank=lastWheel=null;
     c.addEventListener('characteristicvaluechanged',e=>parseCps(e.target.value));
     await c.startNotifications(); log('Subscribed to Cycling Power (no resistance control)');

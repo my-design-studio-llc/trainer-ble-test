@@ -9,6 +9,7 @@ import {
   UUID,
   FTMS_OP,
   FEC_BLE,
+  normUuid,
   parseIndoorBikeData,
   parseCyclingPower,
   cadenceFromCrank,
@@ -26,6 +27,31 @@ export const bluetoothAvailable = () => typeof navigator !== 'undefined' && 'blu
 // Some Web Bluetooth implementations (e.g. Bluefy on iOS) only have the older writeValue().
 const writeWith = (ch, bytes) => (ch.writeValueWithResponse ? ch.writeValueWithResponse(bytes) : ch.writeValue(bytes));
 const writeWithout = (ch, bytes) => (ch.writeValueWithoutResponse ? ch.writeValueWithoutResponse(bytes) : ch.writeValue(bytes));
+
+// Web Bluetooth on iOS (Bluefy) can't match service filters: its scan list comes up empty. List
+// every device there instead; the trainer still shows up by name.
+const isIOS = () =>
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const requestDevice = (services) =>
+  navigator.bluetooth.requestDevice(
+    isIOS()
+      ? { acceptAllDevices: true, optionalServices: services }
+      : { filters: services.map((s) => ({ services: [s] })), optionalServices: services },
+  );
+
+// Looked up by listing and comparing normalized UUIDs, since Bluefy spells them its own way.
+const findService = async (server, uuid) =>
+  (await server.getPrimaryServices()).find((s) => normUuid(s.uuid) === uuid) ?? null;
+const getService = async (server, uuid) => {
+  const svc = await findService(server, uuid);
+  if (!svc) throw new Error(`service ${uuid} not found`);
+  return svc;
+};
+const getCharacteristic = async (svc, uuid) => {
+  const ch = (await svc.getCharacteristics()).find((c) => normUuid(c.uuid) === uuid);
+  if (!ch) throw new Error(`characteristic ${uuid} not found`);
+  return ch;
+};
 
 export class Trainer extends EventTarget {
   device = null;
@@ -50,14 +76,7 @@ export class Trainer extends EventTarget {
   }
 
   async connect() {
-    this.device = await navigator.bluetooth.requestDevice({
-      filters: [
-        { services: [UUID.FTMS] },
-        { services: [UUID.CYCLING_POWER] },
-        { services: [FEC_BLE.SERVICE] },
-      ],
-      optionalServices: [UUID.FTMS, UUID.CYCLING_POWER, FEC_BLE.SERVICE],
-    });
+    this.device = await requestDevice([UUID.FTMS, UUID.CYCLING_POWER, FEC_BLE.SERVICE]);
     this.device.addEventListener('gattserverdisconnected', () => {
       this.#control = null;
       this.#resist = null;
@@ -65,12 +84,12 @@ export class Trainer extends EventTarget {
     });
     const server = await this.device.gatt.connect();
     const [ftms, fec] = await Promise.all([
-      server.getPrimaryService(UUID.FTMS).catch(() => null),
-      server.getPrimaryService(FEC_BLE.SERVICE).catch(() => null),
+      findService(server, UUID.FTMS).catch(() => null),
+      findService(server, FEC_BLE.SERVICE).catch(() => null),
     ]);
 
     if (ftms) {
-      const data = await ftms.getCharacteristic(UUID.INDOOR_BIKE_DATA);
+      const data = await getCharacteristic(ftms, UUID.INDOOR_BIKE_DATA);
       data.addEventListener('characteristicvaluechanged', (e) => this.#emit(parseIndoorBikeData(e.target.value)));
       await data.startNotifications();
       this.protocol = 'FTMS';
@@ -92,8 +111,8 @@ export class Trainer extends EventTarget {
   }
 
   async #subscribeCyclingPower(server, shouldEmit) {
-    const cps = await server.getPrimaryService(UUID.CYCLING_POWER);
-    const meas = await cps.getCharacteristic(UUID.CYCLING_POWER_MEASUREMENT);
+    const cps = await getService(server, UUID.CYCLING_POWER);
+    const meas = await getCharacteristic(cps, UUID.CYCLING_POWER_MEASUREMENT);
     meas.addEventListener('characteristicvaluechanged', (e) => {
       const m = parseCyclingPower(e.target.value);
       const cadence = cadenceFromCrank(this.#lastCrank, m);
@@ -105,13 +124,13 @@ export class Trainer extends EventTarget {
 
   async #setupFtmsControl(ftms) {
     try {
-      const cp = await ftms.getCharacteristic(UUID.FTMS_CONTROL_POINT);
+      const cp = await getCharacteristic(ftms, UUID.FTMS_CONTROL_POINT);
       await cp.startNotifications(); // responses arrive as indications
       await writeWith(cp, Uint8Array.of(FTMS_OP.REQUEST_CONTROL));
       await writeWith(cp, Uint8Array.of(FTMS_OP.START_OR_RESUME));
       let range = [0, 100];
       try {
-        const r = await (await ftms.getCharacteristic(UUID.SUPPORTED_RESISTANCE_RANGE)).readValue();
+        const r = await (await getCharacteristic(ftms, UUID.SUPPORTED_RESISTANCE_RANGE)).readValue();
         range = [r.getInt16(0, true), r.getInt16(2, true)];
       } catch {
         /* range not published: assume 0-100 */
@@ -127,7 +146,7 @@ export class Trainer extends EventTarget {
   async #setupFec(fec, { data }) {
     try {
       if (data) {
-        const rx = await fec.getCharacteristic(FEC_BLE.RX);
+        const rx = await getCharacteristic(fec, FEC_BLE.RX);
         rx.addEventListener('characteristicvaluechanged', (e) => {
           const m = parseFecMessage(e.target.value);
           if (m.power !== undefined) this.#fecDataAt = performance.now();
@@ -135,7 +154,7 @@ export class Trainer extends EventTarget {
         });
         await rx.startNotifications();
       }
-      const tx = await fec.getCharacteristic(FEC_BLE.TX);
+      const tx = await getCharacteristic(fec, FEC_BLE.TX);
       const write = (bytes) =>
         tx.properties.writeWithoutResponse ? writeWithout(tx, bytes) : writeWith(tx, bytes);
       this.#resist = (pct) => write(encodeFecBasicResistance(pct));
@@ -181,11 +200,11 @@ export class HeartRateMonitor extends EventTarget {
   device = null;
 
   async connect() {
-    this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [UUID.HEART_RATE] }] });
+    this.device = await requestDevice([UUID.HEART_RATE]);
     this.device.addEventListener('gattserverdisconnected', () => this.dispatchEvent(new Event('disconnected')));
     const server = await this.device.gatt.connect();
-    const svc = await server.getPrimaryService(UUID.HEART_RATE);
-    const ch = await svc.getCharacteristic(UUID.HEART_RATE_MEASUREMENT);
+    const svc = await getService(server, UUID.HEART_RATE);
+    const ch = await getCharacteristic(svc, UUID.HEART_RATE_MEASUREMENT);
     ch.addEventListener('characteristicvaluechanged', (e) =>
       this.dispatchEvent(new CustomEvent('data', { detail: { hr: parseHeartRate(e.target.value) } })),
     );

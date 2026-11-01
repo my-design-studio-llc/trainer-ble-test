@@ -5,6 +5,16 @@
 // (Bluefy on iOS) reject numeric UUIDs ("Request payload could not be parsed").
 const sig = (n) => `0000${n.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`;
 
+/**
+ * Lower-case 128-bit form of a UUID. Bluefy reports UUIDs upper-case and shortens Bluetooth SIG
+ * ones to 4 hex digits ("1818"), so compare through this rather than with ===.
+ */
+export function normUuid(u) {
+  if (typeof u === 'number') return sig(u);
+  const s = String(u).toLowerCase();
+  return /^([0-9a-f]{4}|[0-9a-f]{8})$/.test(s) ? `${s.padStart(8, '0')}-0000-1000-8000-00805f9b34fb` : s;
+}
+
 export const UUID = {
   FTMS: sig(0x1826),
   INDOOR_BIKE_DATA: sig(0x2ad2),

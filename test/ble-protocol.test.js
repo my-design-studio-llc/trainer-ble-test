@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cadenceFromCrank, encodeSimulation, parseCyclingPower, parseHeartRate, parseIndoorBikeData } from '../ride/js/ble-protocol.js';
+import { cadenceFromCrank, encodeSimulation, normUuid, parseCyclingPower, parseHeartRate, parseIndoorBikeData, UUID, FEC_BLE } from '../ride/js/ble-protocol.js';
 
 const dv = (bytes) => new DataView(Uint8Array.from(bytes).buffer);
 
@@ -90,4 +90,11 @@ test('FTMS resistance maps percent onto the supported range', () => {
   assert.deepEqual([...encodeResistance(50)], [0x04, 50]);
   assert.deepEqual([...encodeResistance(50, [0, 1000])], [0x04, 500 & 0xff, 500 >> 8]);
   assert.deepEqual([...encodeResistance(120, [0, 200])], [0x04, 200]);
+});
+
+test('normUuid matches Bluefy spellings to ours', () => {
+  assert.equal(normUuid('1818'), UUID.CYCLING_POWER);
+  assert.equal(normUuid('2A37'), UUID.HEART_RATE_MEASUREMENT);
+  assert.equal(normUuid('6E40FEC1-B5A3-F393-E0A9-E50E24DCCA9E'), FEC_BLE.SERVICE);
+  assert.equal(normUuid(UUID.FTMS), UUID.FTMS);
 });
