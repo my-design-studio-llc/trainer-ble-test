@@ -41,6 +41,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
     <div class="status" id="status">Not connected</div>
     <div class="row">
       <button id="connect">Connect trainer</button>
+      <button id="scanall" class="ghost" title="List every nearby Bluetooth device, without filtering by service">Show all devices</button>
       <button id="disconnect" class="ghost" disabled>Disconnect</button>
     </div>
   </section>
@@ -86,7 +87,7 @@ input{font:inherit;font-family:var(--mono);width:90px;padding:10px;border-radius
 </main>
 
 <script>
-const VERSION='0.8.1'; // bump on every change so the page shows when it has updated
+const VERSION='0.8.2'; // bump on every change so the page shows when it has updated
 // Full UUID strings: Bluefy on iOS can't parse numeric ones.
 const sig=n=>'0000'+n.toString(16).padStart(4,'0')+'-0000-1000-8000-00805f9b34fb';
 const FTMS=sig(0x1826), CPS=sig(0x1818);
@@ -103,16 +104,19 @@ $('ver').textContent='v'+VERSION; log('Page version '+VERSION);
 navigator.serviceWorker?.register('sw.js').catch(()=>{}); // keeps the site's files fresh
 
 (async()=>{
-  if(!navigator.bluetooth){setStatus('This browser does not support Web Bluetooth (or it is blocked by the page frame)','bad');log('navigator.bluetooth is missing. Use Chrome on Android.');$('connect').disabled=true;return;}
+  if(!navigator.bluetooth){setStatus('This browser does not support Web Bluetooth (or it is blocked by the page frame)','bad');log('navigator.bluetooth is missing. Use Chrome on Android.');$('connect').disabled=$('scanall').disabled=true;return;}
   try{const a=await navigator.bluetooth.getAvailability();log('Bluetooth adapter available: '+a);}catch(e){log('getAvailability failed: '+e.message);}
 })();
 
-$('connect').onclick=async()=>{
+// "Show all devices" skips the service filter: tells a trainer that isn't advertising apart
+// from a browser (e.g. Bluefy) that doesn't match the filter.
+const connect=async all=>{
   try{
     setStatus('Searching…');
-    device=await navigator.bluetooth.requestDevice({
+    const optionalServices=[FTMS,CPS,FEC,sig(0x180a),sig(0x180f)];
+    device=await navigator.bluetooth.requestDevice(all?{acceptAllDevices:true,optionalServices}:{
       filters:[{services:[FTMS]},{services:[CPS]},{services:[FEC]}],
-      optionalServices:[FTMS,CPS,FEC,sig(0x180a),sig(0x180f)]
+      optionalServices
     });
     log('Selected device: '+(device.name||device.id));
     device.addEventListener('gattserverdisconnected',()=>{setStatus('Disconnected','bad');log('Device disconnected');ui(false);});
@@ -138,10 +142,12 @@ $('connect').onclick=async()=>{
     else{setStatus('Connection failed','bad');log(e.name+': '+e.message);}
   }
 };
+$('connect').onclick=()=>connect(false);
+$('scanall').onclick=()=>connect(true);
 
 $('disconnect').onclick=()=>{device?.gatt?.disconnect();};
 
-function ui(on){$('disconnect').disabled=!on;$('connect').disabled=on;if(!on){setCtl(null);['power','cadence','speed'].forEach(k=>show(k,'--'));}}
+function ui(on){$('disconnect').disabled=!on;$('connect').disabled=$('scanall').disabled=on;if(!on){setCtl(null);['power','cadence','speed'].forEach(k=>show(k,'--'));}}
 function setCtl(c){ctl=c;$('erg').disabled=$('ergoff').disabled=!c;['res','resdown','resdown1','resup1','resup','resset'].forEach(k=>$(k).disabled=!c?.setResistance);$('proto').textContent=c?'via '+c.name:'';}
 function hex(v){return [...new Uint8Array(v.buffer,v.byteOffset,v.byteLength)].map(b=>b.toString(16).padStart(2,'0')).join(' ');}
 
