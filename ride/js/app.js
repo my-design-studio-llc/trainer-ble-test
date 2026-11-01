@@ -3,7 +3,8 @@ import { parseTrackFile } from './parsers.js';
 import { DEFAULT_RIDER, stepSpeed } from './physics.js';
 import { ElevationProfile } from './profile.js';
 import { Trainer, HeartRateMonitor, bluetoothAvailable } from './trainer.js';
-import { exportRideTCX, exportRouteCSV, exportRouteJSON } from './export.js';
+import { exportRideTCX, exportRouteCSV, exportRouteJSON, rideTCX } from './export.js';
+import { Strava } from './strava.js';
 import { CanvasMiniMap } from './minimap2d.js';
 import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from './terrain/sources.js';
 import { prepareRoute3D } from './terrain/route3d.js';
@@ -11,7 +12,7 @@ import { OSM_ATTRIBUTION, fetchOsmFeatures, placeCrossings } from './terrain/osm
 import { WEATHER_ATTRIBUTION } from './terrain/weather.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.8.4';
+const VERSION = '0.9.0';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -58,6 +59,7 @@ const look = { yaw: 0, pitch: 0, fov: settings.fov };
 const sensors = { power: undefined, cadence: undefined, speed: undefined, hr: undefined, trainerAt: 0, hrAt: 0 };
 const trainer = new Trainer();
 const hrm = new HeartRateMonitor();
+const strava = new Strava();
 
 // ---------- setup screen ----------
 
@@ -73,6 +75,7 @@ function init() {
   for (const id of ['mass', 'difficulty', 'imagery', 'sky']) $(id).addEventListener('change', readSettingsForm);
 
   $('file-input').addEventListener('change', onFile);
+  initStrava();
   const samples = [...document.querySelectorAll('button.sample')];
   for (const b of samples) b.addEventListener('click', () => loadSample(b.dataset.src, b.dataset.features));
   $('export-csv').addEventListener('click', () => route && exportRouteCSV(route));
@@ -445,8 +448,9 @@ function setupRideControls() {
     if (!ride.samples.length) return flashBanner('Nothing recorded yet', 3000);
     exportRideTCX(route.name, ride.samples);
   });
+  $('strava-upload').addEventListener('click', uploadRide);
   $('exit').addEventListener('click', () => {
-    if (ride?.samples.length > 60 && !confirm('Exit the ride? Anything not exported will be lost.')) return;
+    if (ride?.samples.length > 60 && !ride.uploaded && !confirm('Exit the ride? Anything not exported will be lost.')) return;
     cancelAnimationFrame(ride.raf);
     ride.view.dispose?.();
     ride = null;
@@ -456,6 +460,76 @@ function setupRideControls() {
     $('ride').hidden = true;
     $('setup').hidden = false;
   });
+}
+
+// ---------- Strava ----------
+
+function initStrava() {
+  $('strava-domain').textContent = location.hostname;
+  $('strava-id').value = strava.clientId;
+  $('strava-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = $('strava-id').value;
+    const secret = $('strava-secret').value || (id.trim() === strava.clientId && strava.configured ? null : '');
+    if (secret === '' || !id.trim()) return stravaStatus('Enter the Client ID and Client Secret of your Strava API app.');
+    if (secret !== null) strava.setCredentials(id, secret);
+    strava.authorize();
+  });
+  $('strava-disconnect').addEventListener('click', async () => {
+    await strava.disconnect();
+    stravaStatus('Disconnected.');
+  });
+  stravaStatus();
+  strava
+    .handleRedirect()
+    .then(async (r) => {
+      if (!r) return;
+      stravaStatus();
+      if (r.pending) await uploadPending(r.pending);
+    })
+    .catch((err) => stravaStatus(err.message));
+}
+
+function stravaStatus(message) {
+  $('strava-disconnect').hidden = !strava.connected;
+  $('strava-connect').textContent = strava.connected ? 'Reconnect' : 'Connect Strava';
+  const state = strava.connected ? `Connected${strava.athlete ? ` as ${strava.athlete}` : ''}.` : strava.configured ? 'Not connected.' : '';
+  $('strava-status').textContent = [message, message ? '' : state].filter(Boolean).join(' ');
+}
+
+/** A ride saved before the sign-in redirect: uploaded once Strava sends the rider back. */
+async function uploadPending(file) {
+  try {
+    const url = await strava.upload(file, (s) => stravaStatus(`${file.name}: ${s}`));
+    $('strava-status').innerHTML = '';
+    $('strava-status').append(`Uploaded ${file.name}: `, Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener', textContent: 'open on Strava' }));
+  } catch (err) {
+    stravaStatus(`${err.message}. Start a ride and use Export TCX next time, or try again.`);
+  }
+}
+
+async function uploadRide() {
+  if (!ride) return;
+  if (!ride.samples.length) return flashBanner('Nothing recorded yet', 3000);
+  const file = { ...rideTCX(route.name, ride.samples), name: `Virtual ride: ${route.name}` };
+  if (!strava.configured) return flashBanner('Set up Strava on the start screen first. Use Export TCX to keep this ride.', 6000);
+  if (!strava.connected) {
+    if (!confirm('Sign in to Strava? This ends the ride; it uploads when Strava sends you back.')) return;
+    if (!strava.authorize(file)) alert('This ride is too big to keep across the sign-in. Use Export TCX instead.');
+    return;
+  }
+  const button = $('strava-upload');
+  button.disabled = true;
+  try {
+    const url = await strava.upload(file, (s) => flashBanner(`Strava: ${s}`, 4000));
+    ride.uploaded = true;
+    flashBanner('Uploaded to Strava ✓', 5000);
+    if (confirm('Uploaded to Strava. Open the activity?')) window.open(url, '_blank');
+  } catch (err) {
+    alert(`${err.message}\nUse Export TCX to keep this ride.`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function connectDevice(device, buttonId) {

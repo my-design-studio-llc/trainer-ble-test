@@ -41,11 +41,18 @@ export function exportRouteJSON(route) {
   download(`${slug(route.name)}.json`, JSON.stringify(body), 'application/json');
 }
 
-/**
- * @param samples {{ time: Date, lat, lng, ele, distance, speed, power?, cadence?, hr? }[]}
- */
 export function exportRideTCX(name, samples) {
   if (!samples.length) return;
+  const { filename, text } = rideTCX(name, samples);
+  download(filename, text, 'application/vnd.garmin.tcx+xml');
+}
+
+/**
+ * The ride as a TCX file.
+ * @param samples {{ time: Date, lat, lng, ele, distance, speed, power?, cadence?, hr? }[]}
+ * @returns {{ filename: string, text: string }}
+ */
+export function rideTCX(name, samples) {
   const start = samples[0].time.toISOString();
   const last = samples[samples.length - 1];
   const seconds = (last.time - samples[0].time) / 1000;
@@ -84,7 +91,7 @@ ${points}
   </Activities>
 </TrainingCenterDatabase>
 `;
-  download(`virtual_${slug(name)}_${start.slice(0, 10)}.tcx`, xml, 'application/vnd.garmin.tcx+xml');
+  return { filename: `virtual_${slug(name)}_${start.replace(/[:.]/g, '-').slice(0, 19)}.tcx`, text: xml };
 }
 
 function escapeXml(s) {
