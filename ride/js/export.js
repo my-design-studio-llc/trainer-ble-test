@@ -1,28 +1,32 @@
-// File exports: the route's coordinates, and the virtual ride as TCX for uploading.
+// File exports: the route's coordinates, and the virtual ride as FIT for uploading.
 
 import { routeRows, routeToCSV } from './geo.js';
+import { rideFIT } from './fit.js';
 
 const isIOS = () =>
   /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-export async function download(filename, text, type = 'text/plain') {
+/** Saves text or bytes as a file. */
+export async function download(filename, data, type = 'text/plain') {
   // iOS browsers built on WKWebView (Bluefy) ignore <a download>: hand the file to the share
   // sheet ("Save to Files", AirDrop, mail…) or, failing that, open it in a tab to save from there.
   if (isIOS()) {
-    const file = new File([text], filename, { type: 'text/plain' });
+    const shareType = typeof data === 'string' ? 'text/plain' : 'application/octet-stream';
+    const file = new File([data], filename, { type: shareType });
     if (navigator.canShare?.({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], title: filename });
+        // Files only: a title or text would be saved as a second (.txt) file.
+        await navigator.share({ files: [file] });
         return;
       } catch (err) {
         if (err.name === 'AbortError') return; // the rider closed the share sheet
       }
     }
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const url = URL.createObjectURL(new Blob([data], { type: shareType }));
     if (window.open(url, '_blank')) return setTimeout(() => URL.revokeObjectURL(url), 60000);
     URL.revokeObjectURL(url);
   }
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  const url = URL.createObjectURL(new Blob([data], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.appendChild(a);
   a.click();
@@ -41,59 +45,14 @@ export function exportRouteJSON(route) {
   download(`${slug(route.name)}.json`, JSON.stringify(body), 'application/json');
 }
 
-export function exportRideTCX(name, samples) {
-  if (!samples.length) return;
-  const { filename, text } = rideTCX(name, samples);
-  download(filename, text, 'application/vnd.garmin.tcx+xml');
-}
-
-/**
- * The ride as a TCX file.
- * @param samples {{ time: Date, lat, lng, ele, distance, speed, power?, cadence?, hr? }[]}
- * @returns {{ filename: string, text: string }}
- */
-export function rideTCX(name, samples) {
+/** The ride as a FIT file (Strava, Garmin Connect, intervals.icu…), marked as a virtual ride. */
+export function rideFitFile(name, samples) {
   const start = samples[0].time.toISOString();
-  const last = samples[samples.length - 1];
-  const seconds = (last.time - samples[0].time) / 1000;
-  const points = samples
-    .map(
-      (s) => `        <Trackpoint>
-          <Time>${s.time.toISOString()}</Time>
-          <Position><LatitudeDegrees>${s.lat.toFixed(7)}</LatitudeDegrees><LongitudeDegrees>${s.lng.toFixed(7)}</LongitudeDegrees></Position>
-          <AltitudeMeters>${s.ele.toFixed(1)}</AltitudeMeters>
-          <DistanceMeters>${s.distance.toFixed(1)}</DistanceMeters>${
-            s.hr ? `\n          <HeartRateBpm><Value>${Math.round(s.hr)}</Value></HeartRateBpm>` : ''
-          }${s.cadence !== undefined ? `\n          <Cadence>${Math.round(s.cadence)}</Cadence>` : ''}
-          <Extensions><ns3:TPX><ns3:Speed>${s.speed.toFixed(2)}</ns3:Speed>${
-            s.power !== undefined ? `<ns3:Watts>${Math.round(s.power)}</ns3:Watts>` : ''
-          }</ns3:TPX></Extensions>
-        </Trackpoint>`,
-    )
-    .join('\n');
-
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:ns3="http://www.garmin.com/xmlschemas/ActivityExtension/v2">
-  <Activities>
-    <Activity Sport="Biking">
-      <Id>${start}</Id>
-      <Lap StartTime="${start}">
-        <TotalTimeSeconds>${seconds.toFixed(0)}</TotalTimeSeconds>
-        <DistanceMeters>${last.distance.toFixed(1)}</DistanceMeters>
-        <Intensity>Active</Intensity>
-        <TriggerMethod>Manual</TriggerMethod>
-        <Track>
-${points}
-        </Track>
-      </Lap>
-      <Notes>${escapeXml(`Virtual ride: ${name}`)}</Notes>
-    </Activity>
-  </Activities>
-</TrainingCenterDatabase>
-`;
-  return { filename: `virtual_${slug(name)}_${start.replace(/[:.]/g, '-').slice(0, 19)}.tcx`, text: xml };
+  return { filename: `virtual_${slug(name)}_${start.replace(/[:.]/g, '-').slice(0, 19)}.fit`, data: rideFIT(samples), dataType: 'fit' };
 }
 
-function escapeXml(s) {
-  return s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c]);
+export function exportRideFIT(name, samples) {
+  if (!samples.length) return;
+  const { filename, data } = rideFitFile(name, samples);
+  download(filename, data, 'application/vnd.ant.fit');
 }

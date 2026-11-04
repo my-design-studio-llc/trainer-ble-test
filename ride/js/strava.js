@@ -29,6 +29,10 @@ function write(key, value) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A pending file's bytes go through localStorage as base64.
+const toBase64 = (bytes) => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+const fromBase64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
 async function json(res) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -75,11 +79,11 @@ export class Strava {
 
   /**
    * Sends the browser to Strava's consent page, which comes back to this page with ?code=.
-   * `pending` ({ filename, text, name }) is kept and returned by handleRedirect(); false if it
-   * didn't fit in storage.
+   * `pending` ({ filename, data, dataType, name }) is kept and returned by handleRedirect();
+   * false if it didn't fit in storage.
    */
   authorize(pending) {
-    const kept = pending ? write(PENDING_KEY, pending) : true;
+    const kept = pending ? write(PENDING_KEY, { ...pending, data: toBase64(pending.data) }) : true;
     if (!kept) return false;
     const state = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
     this.#save({ state });
@@ -104,7 +108,8 @@ export class Strava {
     if (!q.has('state') || !this.s.state || q.get('state') !== this.s.state) return null;
     history.replaceState(null, '', location.pathname);
     this.#save({ state: undefined });
-    const pending = read(PENDING_KEY);
+    const stored = read(PENDING_KEY);
+    const pending = stored && { ...stored, data: fromBase64(stored.data) };
     write(PENDING_KEY, undefined);
     if (q.get('error')) throw new Error(`Strava sign-in: ${q.get('error')}`);
     if (!q.get('scope')?.split(',').includes('activity:write')) {
@@ -145,16 +150,17 @@ export class Strava {
   }
 
   /**
-   * Uploads a TCX file and marks the activity as a Virtual Ride.
+   * Uploads a ride file (data: bytes, dataType: 'fit') and marks the activity as a Virtual Ride.
    * @returns {Promise<string>} the activity's URL
    */
-  async upload({ filename, text, name }, onStatus = () => {}) {
+  async upload({ filename, data, dataType, name }, onStatus = () => {}) {
     let auth = await this.#auth();
     const form = new FormData();
-    form.append('file', new Blob([text], { type: 'application/xml' }), filename);
-    form.append('data_type', 'tcx');
+    form.append('file', new Blob([data], { type: 'application/octet-stream' }), filename);
+    form.append('data_type', dataType);
     form.append('name', name);
-    form.append('trainer', '1');
+    // No trainer=1: the FIT file's virtual sub-sport already says indoor, and the trainer flag
+    // would hide the map.
     form.append('external_id', filename);
     onStatus('Uploading…');
     let up;
@@ -177,7 +183,7 @@ export class Strava {
     await fetch(`${API}/activities/${up.activity_id}`, {
       method: 'PUT',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sport_type: 'VirtualRide', trainer: true }),
+      body: JSON.stringify({ sport_type: 'VirtualRide' }),
     }).catch(() => {});
     return `https://www.strava.com/activities/${up.activity_id}`;
   }

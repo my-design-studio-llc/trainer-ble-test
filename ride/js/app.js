@@ -3,7 +3,7 @@ import { parseTrackFile } from './parsers.js';
 import { DEFAULT_RIDER, stepSpeed } from './physics.js';
 import { ElevationProfile } from './profile.js';
 import { Trainer, HeartRateMonitor, bluetoothAvailable } from './trainer.js';
-import { exportRideTCX, exportRouteCSV, exportRouteJSON, rideTCX } from './export.js';
+import { exportRideFIT, exportRouteCSV, exportRouteJSON, rideFitFile } from './export.js';
 import { Strava } from './strava.js';
 import { CanvasMiniMap } from './minimap2d.js';
 import { DEM_ATTRIBUTION, DemSampler, IMAGERY_PROVIDERS, createImagery } from './terrain/sources.js';
@@ -12,7 +12,7 @@ import { OSM_ATTRIBUTION, fetchOsmFeatures, placeCrossings } from './terrain/osm
 import { WEATHER_ATTRIBUTION } from './terrain/weather.js';
 
 // Bump on every change so the page shows when it has updated.
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 
 // three.js is only downloaded when a ride starts.
 const loadTerrainView = () => import('./terrain/view3d.js');
@@ -443,12 +443,13 @@ function setupRideControls() {
       togglePause();
     }
   });
-  $('export-tcx').addEventListener('click', () => {
+  $('export-fit').addEventListener('click', () => {
     if (!ride) return;
     if (!ride.samples.length) return flashBanner('Nothing recorded yet', 3000);
-    exportRideTCX(route.name, ride.samples);
+    exportRideFIT(route.name, ride.samples);
   });
   $('strava-upload').addEventListener('click', uploadRide);
+  $('record-here').addEventListener('click', recordFromHere);
   $('exit').addEventListener('click', () => {
     if (ride?.samples.length > 60 && !ride.uploaded && !confirm('Exit the ride? Anything not exported will be lost.')) return;
     cancelAnimationFrame(ride.raf);
@@ -460,6 +461,18 @@ function setupRideControls() {
     $('ride').hidden = true;
     $('setup').hidden = false;
   });
+}
+
+/**
+ * Starts the recording over at the current spot, so a jump along the profile (or warming up
+ * elsewhere) doesn't leave a straight GPS line across the map in the exported file.
+ */
+function recordFromHere() {
+  if (!ride) return;
+  const km = (ride.odometer / 1000).toFixed(2);
+  if (ride.samples.length && !confirm(`Start a new recording from here? The ${km} km and ${formatTime(ride.elapsed)} recorded so far will be discarded.`)) return;
+  Object.assign(ride, { samples: [], odometer: 0, elapsed: 0, nextSampleAt: 0, uploaded: false });
+  flashBanner('Recording from here', 3000);
 }
 
 // ---------- Strava ----------
@@ -504,18 +517,18 @@ async function uploadPending(file) {
     $('strava-status').innerHTML = '';
     $('strava-status').append(`Uploaded ${file.name}: `, Object.assign(document.createElement('a'), { href: url, target: '_blank', rel: 'noopener', textContent: 'open on Strava' }));
   } catch (err) {
-    stravaStatus(`${err.message}. Start a ride and use Export TCX next time, or try again.`);
+    stravaStatus(`${err.message}. Start a ride and use Export FIT next time, or try again.`);
   }
 }
 
 async function uploadRide() {
   if (!ride) return;
   if (!ride.samples.length) return flashBanner('Nothing recorded yet', 3000);
-  const file = { ...rideTCX(route.name, ride.samples), name: `Virtual ride: ${route.name}` };
-  if (!strava.configured) return flashBanner('Set up Strava on the start screen first. Use Export TCX to keep this ride.', 6000);
+  const file = { ...rideFitFile(route.name, ride.samples), name: `Virtual ride: ${route.name}` };
+  if (!strava.configured) return flashBanner('Set up Strava on the start screen first. Use Export FIT to keep this ride.', 6000);
   if (!strava.connected) {
     if (!confirm('Sign in to Strava? This ends the ride; it uploads when Strava sends you back.')) return;
-    if (!strava.authorize(file)) alert('This ride is too big to keep across the sign-in. Use Export TCX instead.');
+    if (!strava.authorize(file)) alert('This ride is too big to keep across the sign-in. Use Export FIT instead.');
     return;
   }
   const button = $('strava-upload');
@@ -526,7 +539,7 @@ async function uploadRide() {
     flashBanner('Uploaded to Strava ✓', 5000);
     if (confirm('Uploaded to Strava. Open the activity?')) window.open(url, '_blank');
   } catch (err) {
-    alert(`${err.message}\nUse Export TCX to keep this ride.`);
+    alert(`${err.message}\nUse Export FIT to keep this ride.`);
   } finally {
     button.disabled = false;
   }

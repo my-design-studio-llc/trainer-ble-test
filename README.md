@@ -35,7 +35,7 @@ Ride a real route through a 3D scene built in the browser from satellite imagery
 - Full screen: on phones, Start ride goes full screen and locks landscape; the button at the top of the right-hand bar toggles it
 - Keeps the screen on during a ride (Screen Wake Lock)
 - Installable: Add to Home screen opens Ride 3D full screen in landscape
-- Heart rate strap support, TCX export of the ride (power, cadence, heart rate)
+- Heart rate strap support, FIT export of the ride (power, cadence, heart rate; marked as a virtual ride, so Strava tags it Indoor Cycling)
 
 Data sources: imagery from Esri World Imagery, Sentinel-2 cloudless (EOX) or USDA NAIP (public domain), elevation from AWS Terrain Tiles,
 weather from Open-Meteo, ground textures from ambientCG (CC0),
